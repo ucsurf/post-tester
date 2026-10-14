@@ -218,3 +218,38 @@ pub async fn ws_close(State(state): State<AppState>, Path(id): Path<String>) -> 
         Err(ApiError::not_found("this WebSocket session is not open"))
     }
 }
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportTarget {
+    id: String,
+    name: String,
+    file_extension: String,
+}
+
+pub async fn export_targets(State(state): State<AppState>) -> Json<Vec<ExportTarget>> {
+    let targets = state.plugins.export_targets().into_iter();
+    Json(targets.map(|(id, info)| ExportTarget { id, name: info.display_name, file_extension: info.file_extension }).collect())
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ExportBody {
+    /// Folder id (`""` for the whole workspace).
+    #[serde(default)]
+    folder: String,
+    exporter: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct Exported {
+    content: String,
+}
+
+pub async fn export(State(state): State<AppState>, Json(body): Json<ExportBody>) -> ApiResult<Json<Exported>> {
+    let workspace = state.engine.require_workspace()?;
+    let tree = workspace.tree()?;
+    let folder = tree.find(&body.folder).ok_or_else(|| ApiError::not_found(format!("folder `{}`", body.folder)))?;
+    let requests =
+        folder.request_ids().into_iter().map(|id| workspace.read_request(&id).map(|r| (id, r))).collect::<Result<Vec<_>, _>>()?;
+    Ok(Json(Exported { content: state.plugins.export(&body.exporter, &folder.name, &requests).await? }))
+}

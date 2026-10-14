@@ -1,0 +1,11 @@
+{
+  "$schema": "../../../packages/plugin-sdk/plugin.schema.json",
+  "name": "json-table",
+  "displayName": "JSON Table",
+  "description": "Shows JSON responses as HTML tables: arrays of objects as rows, objects as key/value pairs.",
+  "version": "1.0.0",
+  "engine": "^0.1.0",
+  "main": "index.ts",
+  "provides": ["viewer"],
+  "permissions": []
+}

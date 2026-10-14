@@ -34,6 +34,9 @@ use ts_rs::TS;
 /// How long one plugin call or script may run.
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// The hooks a plugin can define in `hooks`.
+pub const HOOK_NAMES: &[&str] = &["beforeRequest", "afterResponse"];
+
 // ── What plugins provide ────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, TS)]
@@ -225,11 +228,16 @@ impl std::fmt::Debug for PluginHost {
 impl PluginHost {
     /// Creates a host and registers it as the engine's extensions.
     pub fn attach(engine: &Arc<Engine>) -> Arc<Self> {
+        Self::attach_with_timeout(engine, DEFAULT_TIMEOUT)
+    }
+
+    /// Like [`PluginHost::attach`], with a custom time limit for each plugin call and script.
+    pub fn attach_with_timeout(engine: &Arc<Engine>, timeout: Duration) -> Arc<Self> {
         let host = Arc::new(Self {
             engine: Arc::downgrade(engine),
             plugins: RwLock::new(Vec::new()),
             scripts: tokio::sync::OnceCell::new(),
-            timeout: DEFAULT_TIMEOUT,
+            timeout,
         });
         engine.set_extensions(host.clone());
         host
@@ -286,7 +294,10 @@ impl PluginHost {
                     let pending = plugin.info().pending_permissions;
                     span.log(Level::Info, format!("Loaded {} {}", plugin.manifest.name, plugin.manifest.version));
                     if !pending.is_empty() {
-                        span.log(Level::Warn, format!("{} is waiting for permission approval: {}", plugin.manifest.name, pending.join(", ")));
+                        span.log(
+                            Level::Warn,
+                            format!("{} is waiting for permission approval: {}", plugin.manifest.name, pending.join(", ")),
+                        );
                     }
                 }
                 Err(problems) => {
@@ -297,7 +308,11 @@ impl PluginHost {
                 }
             }
         }
-        if failures.is_empty() { span.finish_ok(None, None) } else { span.finish_error(format!("{} plugin(s) failed to load", failures.len())) }
+        if failures.is_empty() {
+            span.finish_ok(None, None)
+        } else {
+            span.finish_error(format!("{} plugin(s) failed to load", failures.len()))
+        }
         failures
     }
 
@@ -313,6 +328,7 @@ impl PluginHost {
     /// Runs a plugin's `*.test.ts` / `*.test.js` files, with every declared permission granted.
     pub async fn test(&self, dir: &Path) -> std::result::Result<TestReport, Vec<Problem>> {
         let engine = self.engine().map_err(|e| vec![problem("post-tester", e.to_string(), "restart")])?;
+        let dir = &plugin_dir(dir)?;
         let manifest = Manifest::load(dir).map_err(|p| vec![p])?;
         let plugin = load_plugin(dir, manifest.permissions.clone(), Arc::downgrade(&engine), Some(dir.to_path_buf()), self.timeout).await?;
         let mut files: Vec<PathBuf> = std::fs::read_dir(dir)
@@ -322,9 +338,20 @@ impl PluginHost {
             .collect();
         files.sort();
         if files.is_empty() {
-            return Err(vec![problem("tests", "no test files found".into(), "add an index.test.ts file (see the plugin guide, section Testing)")]);
+            return Err(vec![problem(
+                "tests",
+                "no test files found".into(),
+                "add an index.test.ts file (see the plugin guide, section Testing)",
+            )]);
         }
-        let span = Span::start(engine.bus(), Source::Cli, None, SpanKind::PluginCall, format!("Test plugin {}", plugin.manifest.name), Summary::default());
+        let span = Span::start(
+            engine.bus(),
+            Source::Cli,
+            None,
+            SpanKind::PluginCall,
+            format!("Test plugin {}", plugin.manifest.name),
+            Summary::default(),
+        );
         let mut tests = Vec::new();
         for file in &files {
             // Each test file gets a fresh sandbox so tests cannot affect each other.
@@ -345,7 +372,11 @@ impl PluginHost {
             }
         }
         let report = TestReport { plugin: plugin.manifest.name.clone(), files: files.iter().map(|f| file_name(f)).collect(), tests };
-        if report.passed() { span.finish_ok(None, None) } else { span.finish(post_tester_core::events::Outcome::Failed, None, None, None) }
+        if report.passed() {
+            span.finish_ok(None, None)
+        } else {
+            span.finish(post_tester_core::events::Outcome::Failed, None, None, None)
+        }
         Ok(report)
     }
 
@@ -388,10 +419,8 @@ impl PluginHost {
 
     async fn run_importer(&self, plugin: &Plugin, name: &str, text: &str) -> Result<post_tester_core::import::Imported> {
         let value = plugin.call(None, "importer", name, serde_json::json!({ "text": text })).await?;
-        let mut imported = post_tester_core::import::Imported {
-            name: value["name"].as_str().unwrap_or("Imported").to_string(),
-            ..Default::default()
-        };
+        let mut imported =
+            post_tester_core::import::Imported { name: value["name"].as_str().unwrap_or("Imported").to_string(), ..Default::default() };
         for raw in value["requests"].as_array().into_iter().flatten() {
             let folder = raw["folder"].as_str().unwrap_or_default().to_string();
             let mut raw = raw.clone();
@@ -401,6 +430,33 @@ impl PluginHost {
             imported.add_request(&folder, request);
         }
         Ok(imported)
+    }
+
+    /// Every plugin exporter as `plugin/name`.
+    pub fn export_targets(&self) -> Vec<(String, ExporterInfo)> {
+        self.plugins()
+            .iter()
+            .flat_map(|p| p.capabilities.exporters.iter().map(move |e| (format!("{}/{}", p.manifest.name, e.name), e.clone())))
+            .collect()
+    }
+
+    /// Exports requests with a plugin exporter (`plugin/name`). The plugin receives
+    /// `{ name, requests }`, each request in the request-file format plus its `id`.
+    pub async fn export(&self, id: &str, name: &str, requests: &[(String, Request)]) -> Result<String> {
+        let (plugin, exporter) = self.resolve(id, |c| c.exporters.iter().map(|e| e.name.clone()).collect())?;
+        let requests: Vec<serde_json::Value> = requests
+            .iter()
+            .map(|(id, request)| {
+                let mut value = serde_json::to_value(request).unwrap_or_default();
+                if let Some(object) = value.as_object_mut() {
+                    object.insert("id".into(), id.clone().into());
+                }
+                value
+            })
+            .collect();
+        let payload = serde_json::json!({ "collection": { "name": name, "requests": requests } });
+        let value = plugin.call(None, "exporter", &exporter, payload).await?;
+        Ok(value.as_str().unwrap_or_default().to_string())
     }
 
     /// Every plugin MCP tool as (`plugin_tool` name, plugin, info).
@@ -522,6 +578,7 @@ async fn load_plugin(
     fs_root: Option<PathBuf>,
     timeout: Duration,
 ) -> std::result::Result<Plugin, Vec<Problem>> {
+    let dir = &plugin_dir(dir)?;
     let manifest = Manifest::load(dir).map_err(|p| vec![p])?;
     let mut problems = manifest.validate();
     let main = dir.join(&manifest.main);
@@ -533,7 +590,8 @@ async fn load_plugin(
     }
 
     let declared = manifest.parsed_permissions();
-    let granted_parsed: Vec<Permission> = granted.iter().filter_map(|p| Permission::parse(p).ok()).filter(|p| declared.contains(p)).collect();
+    let granted_parsed: Vec<Permission> =
+        granted.iter().filter_map(|p| Permission::parse(p).ok()).filter(|p| declared.contains(p)).collect();
     let state = Arc::new(HostState::new(
         manifest.name.clone(),
         Source::Plugin { name: manifest.name.clone() },
@@ -542,15 +600,19 @@ async fn load_plugin(
         engine,
         fs_root,
     ));
-    let sandbox = Sandbox::new(state, Some(dir.to_path_buf()), timeout).await.map_err(|e| vec![problem("sandbox", e, "report this as a bug")])?;
-    sandbox.load_plugin(&main).await.map_err(|e| vec![problem(&manifest.main, e, "fix the error above; the plugin must `export default definePlugin({ ... })`")])?;
+    let sandbox =
+        Sandbox::new(state, Some(dir.to_path_buf()), timeout).await.map_err(|e| vec![problem("sandbox", e, "report this as a bug")])?;
+    sandbox
+        .load_plugin(&main)
+        .await
+        .map_err(|e| vec![problem(&manifest.main, e, "fix the error above; the plugin must `export default definePlugin({ ... })`")])?;
 
     let described = sandbox
         .call(None, "describe", "", &serde_json::Value::Null)
         .await
         .map_err(|e| vec![problem(&manifest.main, e, "check the plugin definition")])?;
-    let capabilities: Capabilities = serde_json::from_value(described)
-        .map_err(|e| vec![problem(&manifest.main, e.to_string(), "check the plugin definition")])?;
+    let capabilities: Capabilities =
+        serde_json::from_value(described).map_err(|e| vec![problem(&manifest.main, e.to_string(), "check the plugin definition")])?;
 
     // `provides` and the exported keys must agree.
     let mut problems = Vec::new();
@@ -558,26 +620,65 @@ async fn load_plugin(
         let listed = manifest.provides.iter().any(|p| p == kind);
         let exported = capabilities.keys.iter().any(|k| k == key);
         if listed && !exported {
-            problems.push(problem(&manifest.main, format!("plugin.json lists \"{kind}\" in provides, but definePlugin has no `{key}`"), &format!("add `{key}: {{ ... }}` or remove \"{kind}\" from provides")));
+            problems.push(problem(
+                &manifest.main,
+                format!("plugin.json lists \"{kind}\" in provides, but definePlugin has no `{key}`"),
+                &format!("add `{key}: {{ ... }}` or remove \"{kind}\" from provides"),
+            ));
         }
         if exported && !listed {
-            problems.push(problem("plugin.json: provides", format!("definePlugin has `{key}`, but provides does not list \"{kind}\""), &format!("add \"{kind}\" to provides")));
+            problems.push(problem(
+                "plugin.json: provides",
+                format!("definePlugin has `{key}`, but provides does not list \"{kind}\""),
+                &format!("add \"{kind}\" to provides"),
+            ));
         }
+    }
+    // Hooks are looked up by name, so a misspelled hook would silently never run.
+    for hook in capabilities.hooks.iter().filter(|h| !HOOK_NAMES.contains(&h.as_str())) {
+        problems.push(problem(&manifest.main, format!("unknown hook `{hook}`"), &format!("use one of: {}", HOOK_NAMES.join(", "))));
     }
     for f in &capabilities.template_functions {
         if f.description.trim().is_empty() {
-            problems.push(problem(&manifest.main, format!("template function `{}` has no description", f.name), "add `description: \"...\"`; it is shown to users and AI agents"));
+            problems.push(problem(
+                &manifest.main,
+                format!("template function `{}` has no description", f.name),
+                "add `description: \"...\"`; it is shown to users and AI agents",
+            ));
         }
     }
     for t in &capabilities.mcp_tools {
         if t.description.trim().is_empty() {
-            problems.push(problem(&manifest.main, format!("MCP tool `{}` has no description", t.name), "add `description: \"...\"`; AI agents use it to decide when to call the tool"));
+            problems.push(problem(
+                &manifest.main,
+                format!("MCP tool `{}` has no description", t.name),
+                "add `description: \"...\"`; AI agents use it to decide when to call the tool",
+            ));
         }
     }
     if !problems.is_empty() {
         return Err(problems);
     }
     Ok(Plugin { manifest, dir: dir.to_path_buf(), capabilities, granted, sandbox })
+}
+
+/// The plugin folder as an absolute path. Module specifiers are built from it,
+/// and the module resolver only accepts absolute or `./` paths, so a relative
+/// folder such as `plugins/my-plugin` would otherwise fail to load.
+fn plugin_dir(dir: &Path) -> std::result::Result<PathBuf, Vec<Problem>> {
+    match dir.canonicalize() {
+        Ok(path) if path.is_dir() => Ok(path),
+        Ok(_) => Err(vec![problem(
+            &dir.display().to_string(),
+            "is not a folder".into(),
+            "pass the plugin folder (the one containing plugin.json)",
+        )]),
+        Err(e) => Err(vec![problem(
+            &dir.display().to_string(),
+            format!("cannot open the plugin folder: {e}"),
+            "check the path; it must be a folder containing plugin.json (create one with `pt plugin new <type> <name>`)",
+        )]),
+    }
 }
 
 fn problem(location: &str, message: String, fix: &str) -> Problem {

@@ -164,7 +164,15 @@ async fn resolve(expr: &str, ctx: &dyn TemplateContext) -> Result<Option<String>
     if expr.starts_with('$') {
         return Ok(builtin(expr));
     }
-    if let Some((name, args)) = parse_call(expr)? {
+    if let Some((name, mut args)) = parse_call(expr)? {
+        // Text arguments may use templates themselves: totp(secret: "{{secret:otp}}").
+        for value in args.values_mut() {
+            if let serde_json::Value::String(text) = value
+                && text.contains("{{")
+            {
+                *text = render(text, ctx).await?.text;
+            }
+        }
         return match ctx.function(&name, &args).await? {
             Some(value) => Ok(Some(value)),
             None => {
@@ -284,6 +292,13 @@ mod tests {
         let r = render("{{base}}/x?t={{ secret:token }}&n={{upper(\"ab}}c\")}}", &c).await.unwrap();
         assert_eq!(r.text, "https://example.com/x?t=s3cret&n=AB}}C");
         assert!(r.unresolved.is_empty());
+    }
+
+    #[tokio::test]
+    async fn function_arguments_can_use_variables_and_secrets() {
+        let c = ctx(&[("name", "ada")]);
+        let r = render(r#"{{upper("{{name}}-{{secret:token}}")}}"#, &c).await.unwrap();
+        assert_eq!(r.text, "ADA-S3CRET");
     }
 
     #[tokio::test]

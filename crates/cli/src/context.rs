@@ -25,6 +25,10 @@ impl Context {
         let engine = Arc::new(Engine::new(EventBus::default(), workspace.clone(), secrets::default_store()));
         let plugins = PluginHost::attach(&engine);
         if let Some(workspace) = &workspace {
+            // History is a convenience: if it can't be written, carry on without it.
+            if let Err(e) = workspace.local_dir().and_then(|dir| Ok(post_tester_core::history::attach(engine.bus(), &dir)?)) {
+                eprintln!("{} history is not saved: {e}", crate::style::yellow("warning:"));
+            }
             for (path, problems) in plugins.load_workspace(workspace).await {
                 eprintln!("{} plugin {path} was not loaded:", crate::style::yellow("warning:"));
                 for problem in problems {

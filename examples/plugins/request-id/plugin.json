@@ -1,0 +1,11 @@
+{
+  "$schema": "../../../packages/plugin-sdk/plugin.schema.json",
+  "name": "request-id",
+  "displayName": "Request ID",
+  "description": "Adds a unique X-Request-Id header to every request and warns about slow responses.",
+  "version": "1.0.0",
+  "engine": "^0.1.0",
+  "main": "index.ts",
+  "provides": ["hook"],
+  "permissions": []
+}

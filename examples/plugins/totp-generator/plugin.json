@@ -1,0 +1,11 @@
+{
+  "$schema": "../../../packages/plugin-sdk/plugin.schema.json",
+  "name": "totp-generator",
+  "displayName": "TOTP Generator",
+  "description": "Generates time-based one-time passwords (RFC 6238), e.g. for logging in to APIs protected by 2FA.",
+  "version": "1.0.0",
+  "engine": "^0.1.0",
+  "main": "index.ts",
+  "provides": ["template-function"],
+  "permissions": []
+}

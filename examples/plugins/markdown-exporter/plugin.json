@@ -1,0 +1,11 @@
+{
+  "$schema": "../../../packages/plugin-sdk/plugin.schema.json",
+  "name": "markdown-exporter",
+  "displayName": "Markdown Exporter",
+  "description": "Exports a collection as Markdown API documentation.",
+  "version": "1.0.0",
+  "engine": "^0.1.0",
+  "main": "index.ts",
+  "provides": ["exporter"],
+  "permissions": []
+}

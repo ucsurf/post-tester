@@ -500,7 +500,13 @@ globalThis.__pt_run_script = async (phase, code, inputJson) => {
     },
   });
 
-  const run = new Function("pt", "pm", "console", "ctx", `return (async () => {\n${code}\n})();`);
+  let run;
+  try {
+    run = new Function("pt", "pm", "console", "ctx", `return (async () => {\n${code}\n})();`);
+  } catch (e) {
+    // QuickJS messages such as "unexpected token in expression" do not say they are syntax errors.
+    throw new Error(`syntax error in the script: ${e && e.message ? e.message : e}`);
+  }
   await run(pt, pm, console, ctx);
   await Promise.all(pending);
   if (phase === "before_request") output.request = __serializeRequest(request);

@@ -31,6 +31,9 @@ pub fn run() {
             let workspace = open_initial_workspace(app.handle())?;
             let engine = Arc::new(Engine::new(EventBus::default(), Some(workspace.clone()), secret_store()));
             let plugins = PluginHost::attach(&engine);
+            if let Ok(dir) = workspace.local_dir() {
+                let _ = post_tester_core::history::attach(engine.bus(), &dir);
+            }
 
             let server = tauri::async_runtime::block_on(async {
                 plugins.load_workspace(&workspace).await;

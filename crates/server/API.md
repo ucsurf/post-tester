@@ -114,6 +114,8 @@ type LoadBody = { request: Request; requestId?: string; environment?: string | n
 | GET | `/api/codegen/targets` | | `{ id: string; name: string; language: string }[]` |
 | POST | `/api/codegen` | `SendBody & { target: string }` | `{ code: string; language: string }` |
 | POST | `/api/import` | `{ text: string; into?: string }` | `{ folder: string; requests: string[]; environments: string[] }` |
+| GET | `/api/export/targets` | | `{ id: string; name: string; fileExtension: string }[]` (plugin exporters) |
+| POST | `/api/export` | `{ folder: string; exporter: string }` | `{ content: string }` |
 | GET | `/api/plugins` | | `PluginInfo[]` |
 | POST | `/api/plugins/reload` | | `PluginInfo[]` |
 | POST | `/api/plugins/{name}/approve` | | `PluginInfo` (approves all declared permissions) |

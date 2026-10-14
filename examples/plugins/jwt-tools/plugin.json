@@ -1,0 +1,11 @@
+{
+  "$schema": "../../../packages/plugin-sdk/plugin.schema.json",
+  "name": "jwt-tools",
+  "displayName": "JWT Tools",
+  "description": "Gives AI agents a tool to decode JSON Web Tokens and check their expiry while debugging auth.",
+  "version": "1.0.0",
+  "engine": "^0.1.0",
+  "main": "index.ts",
+  "provides": ["mcp-tool"],
+  "permissions": []
+}

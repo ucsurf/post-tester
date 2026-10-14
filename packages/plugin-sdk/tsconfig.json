@@ -1,0 +1,17 @@
+{
+  "$comment": "Example tsconfig.json for a post-tester plugin. Copy it into your plugin folder. post-tester only strips types (it never type-checks), so run `npx tsc` yourself to catch type errors.",
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2023"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "types": ["@post-tester/plugin-sdk/globals"],
+    "strict": true,
+    "noEmit": true,
+    "isolatedModules": true,
+    "allowImportingTsExtensions": true,
+    "skipLibCheck": true
+  },
+  "include": ["**/*.ts"],
+  "exclude": ["node_modules"]
+}

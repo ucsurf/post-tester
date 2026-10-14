@@ -36,6 +36,8 @@ enum Command {
     Mcp(commands::serve::McpArgs),
     /// Import cURL, Postman, OpenAPI or plugin formats into the workspace.
     Import(commands::workspace::ImportArgs),
+    /// Export a folder with a plugin exporter.
+    Export(commands::workspace::ExportArgs),
     /// Print code that sends a request (cURL, JavaScript, Python, plugins).
     Codegen(commands::request::CodegenArgs),
     /// List and show environments.
@@ -65,6 +67,7 @@ async fn main() -> ExitCode {
         Command::Serve(args) => commands::serve::serve(workspace, args).await,
         Command::Mcp(args) => commands::serve::mcp(workspace, args).await,
         Command::Import(args) => commands::workspace::import(workspace, args).await,
+        Command::Export(args) => commands::workspace::export(workspace, args).await,
         Command::Codegen(args) => commands::request::codegen(workspace, args).await,
         Command::Env(command) => commands::workspace::env(workspace, command).await,
         Command::Secret(command) => commands::workspace::secret(workspace, command).await,

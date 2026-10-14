@@ -1,0 +1,11 @@
+{
+  "$schema": "../../../packages/plugin-sdk/plugin.schema.json",
+  "name": "har-importer",
+  "displayName": "HAR Importer",
+  "description": "Imports requests from HAR 1.2 files exported by browser developer tools and proxies.",
+  "version": "1.0.0",
+  "engine": "^0.1.0",
+  "main": "index.ts",
+  "provides": ["importer"],
+  "permissions": []
+}

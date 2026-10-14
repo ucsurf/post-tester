@@ -289,22 +289,21 @@ impl Engine {
         };
         let environment = self.resolve_environment(options.environment.clone());
 
-        // 1. Before-request script: may set variables used below.
+        // 1. Before-request script: may set variables used below, and change the request.
+        let mut script_changes = None;
         if !request.scripts.before_request.trim().is_empty() {
             let vars = self.variables(environment.as_deref(), &folders)?;
-            let input = ScriptInput {
-                request: ScriptRequest {
-                    method: request.method.as_str().to_string(),
-                    url: request.url.clone(),
-                    headers: request.headers.iter().filter(|h| h.enabled).map(|h| (h.key.clone(), h.value.clone())).collect(),
-                    body: String::new(),
-                },
-                response: None,
-                variables: vars.flatten(),
-                environment: environment.clone(),
+            let before = ScriptRequest {
+                method: request.method.as_str().to_string(),
+                url: request.url.clone(),
+                headers: request.headers.iter().filter(|h| h.enabled).map(|h| (h.key.clone(), h.value.clone())).collect(),
+                body: raw_body(&request.body),
             };
+            let input =
+                ScriptInput { request: before.clone(), response: None, variables: vars.flatten(), environment: environment.clone() };
             let output = self.run_script(&extensions, ScriptPhase::BeforeRequest, &request.scripts.before_request, input, span).await?;
             execution.tests.extend(output.tests);
+            script_changes = output.request.map(|after| (before, after));
         }
 
         // 2. Prepare: variables, folder inheritance, body, built-in auth.
@@ -318,6 +317,9 @@ impl Engine {
             );
         }
         let mut outgoing = prepared.request;
+        if let Some((before, after)) = script_changes {
+            apply_script_changes(&mut outgoing, &before, &after, &ctx).await?;
+        }
 
         // 3. Plugin auth and hooks.
         if let Some((name, config)) = prepared.plugin_auth {
@@ -417,6 +419,46 @@ impl Engine {
         }
         Ok(output)
     }
+}
+
+/// The body as a script sees it before templates are rendered.
+fn raw_body(body: &crate::model::Body) -> String {
+    match body {
+        crate::model::Body::Text { content, .. } | crate::model::Body::Json { content } => content.clone(),
+        crate::model::Body::Graphql { query, .. } => query.clone(),
+        crate::model::Body::None | crate::model::Body::Form { .. } => String::new(),
+    }
+}
+
+/// Applies what a before-request script changed (compared with what it was
+/// given) to the prepared request. Changed values may contain templates.
+async fn apply_script_changes(
+    outgoing: &mut PreparedRequest,
+    before: &ScriptRequest,
+    after: &ScriptRequest,
+    ctx: &dyn TemplateContext,
+) -> Result<()> {
+    if !after.method.eq_ignore_ascii_case(&before.method) {
+        outgoing.method = after.method.to_ascii_uppercase();
+    }
+    if after.url != before.url {
+        let url = crate::template::render(&after.url, ctx).await?.text;
+        outgoing.url = url::Url::parse(&url).map_err(|e| Error::InvalidUrl { url, reason: e.to_string() })?;
+    }
+    for (name, _) in &before.headers {
+        if !after.headers.iter().any(|(k, _)| k.eq_ignore_ascii_case(name)) {
+            outgoing.headers.retain(|(k, _)| !k.eq_ignore_ascii_case(name));
+        }
+    }
+    for (name, value) in &after.headers {
+        if !before.headers.iter().any(|(k, v)| k.eq_ignore_ascii_case(name) && v == value) {
+            outgoing.set_header(name, crate::template::render(value, ctx).await?.text);
+        }
+    }
+    if after.body != before.body {
+        outgoing.body = crate::template::render(&after.body, ctx).await?.text.into_bytes().into();
+    }
+    Ok(())
 }
 
 /// Removes an operation from the active list when it ends.

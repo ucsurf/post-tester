@@ -17,6 +17,7 @@
 //! | [`ws`]         | WebSocket sessions                                           |
 //! | [`extensions`] | The interface plugins implement                              |
 //! | [`secrets`]    | Where secret values come from                                |
+//! | [`history`]    | Keeping Live Activity across restarts                        |
 //! | [`import`]     | Importing cURL, Postman and OpenAPI                          |
 //! | [`codegen`]    | Generating code (cURL, JavaScript, Python) from requests     |
 
@@ -26,6 +27,7 @@ pub mod error;
 pub mod events;
 pub mod expr;
 pub mod extensions;
+pub mod history;
 pub mod http;
 pub mod import;
 pub mod loadtest;

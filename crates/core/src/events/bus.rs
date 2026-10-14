@@ -116,6 +116,21 @@ impl EventBus {
         self.inner.recent.lock().expect("event history lock poisoned").iter().filter(|e| e.span_id == span_id).cloned().collect()
     }
 
+    /// Puts previously recorded events back into the history (without
+    /// broadcasting them), and continues numbering after the newest one.
+    pub fn restore(&self, events: Vec<Event>) {
+        let mut recent = self.inner.recent.lock().expect("event history lock poisoned");
+        if let Some(max) = events.iter().map(|e| e.seq).max() {
+            self.inner.next_seq.fetch_max(max + 1, Ordering::Relaxed);
+        }
+        let mut restored: VecDeque<Arc<Event>> = events.into_iter().map(Arc::new).collect();
+        restored.append(&mut recent);
+        while restored.len() > self.inner.history_len {
+            restored.pop_front();
+        }
+        *recent = restored;
+    }
+
     /// Storage for large payloads referenced by events.
     pub fn blobs(&self) -> &BlobStore {
         &self.inner.blobs

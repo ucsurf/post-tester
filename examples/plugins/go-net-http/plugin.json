@@ -1,0 +1,11 @@
+{
+  "$schema": "../../../packages/plugin-sdk/plugin.schema.json",
+  "name": "go-net-http",
+  "displayName": "Go (net/http)",
+  "description": "Generates a runnable Go program that sends the request with the standard net/http package.",
+  "version": "1.0.0",
+  "engine": "^0.1.0",
+  "main": "index.ts",
+  "provides": ["codegen"],
+  "permissions": []
+}

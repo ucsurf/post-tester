@@ -40,6 +40,8 @@ pub fn api() -> Router<AppState> {
         .route("/api/codegen/targets", get(tools::codegen_targets))
         .route("/api/codegen", post(tools::generate_code))
         .route("/api/import", post(tools::import))
+        .route("/api/export/targets", get(tools::export_targets))
+        .route("/api/export", post(tools::export))
         .route("/api/plugins", get(tools::plugins))
         .route("/api/plugins/reload", post(tools::reload_plugins))
         .route("/api/plugins/{name}/approve", post(tools::approve_plugin))

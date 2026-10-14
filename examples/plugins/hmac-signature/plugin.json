@@ -1,0 +1,11 @@
+{
+  "$schema": "../../../packages/plugin-sdk/plugin.schema.json",
+  "name": "hmac-signature",
+  "displayName": "HMAC Signature",
+  "description": "Signs requests with HMAC-SHA256 over the method, URL, timestamp and body hash.",
+  "version": "1.0.0",
+  "engine": "^0.1.0",
+  "main": "index.ts",
+  "provides": ["auth"],
+  "permissions": []
+}

@@ -1,0 +1,24 @@
+# post-tester
+
+> post-tester is an open, local-first API client for building, sending, testing and automating API requests, with everything visible live. Workspaces are plain YAML files (one request per file), and it can be extended with sandboxed TypeScript/JavaScript plugins. Status: early development; APIs may change before 1.0.
+
+Plugins add template functions, auth methods, request hooks, importers, exporters, code generators, response viewers and MCP tools for AI agents. They are checked with `pt plugin validate` and tested with `pt plugin test`. To write a plugin, read the plugin guide first, then copy the closest example.
+
+## Docs
+
+- [Guide overview](guide/README.md): core concepts (workspace, collection, request, environment, secret, Live Activity) and the workspace folder layout.
+- [Plugin guide](guide/plugins/README.md): the complete, accurate reference for building plugins: plugin.json rules, every plugin type, the request/response objects, ctx APIs and their permissions, sandbox limits, testing, CLI commands and a pre-publish checklist.
+
+## API reference
+
+- [Plugin SDK types](packages/plugin-sdk/index.d.ts): documented TypeScript types for definePlugin, every plugin definition, ctx, Headers, requests, responses and importer results; the source of truth for field names.
+- [Plugin test helpers](packages/plugin-sdk/testing.d.ts): testPlugin() and the shapes it returns; test globals and matchers are in packages/plugin-sdk/globals.d.ts.
+- [plugin.json schema](packages/plugin-sdk/plugin.schema.json): JSON Schema for plugin manifests, with the name, version, engine, provides and permissions rules.
+
+## Examples
+
+- [Example plugins](examples/plugins/): one small, commented, tested plugin per type (totp-generator, request-id, hmac-signature, har-importer, markdown-exporter, go-net-http, json-table, jwt-tools), each with plugin.json, index.ts, index.test.ts and README.md.
+
+## Optional
+
+- [README](README.md): project overview, features and the plan for MCP support.

@@ -54,7 +54,14 @@ impl Permission {
             "fs:read" => Permission::FsRead,
             "fs:write" => Permission::FsWrite,
             _ => match text.strip_prefix("network:") {
-                Some(host) if !host.is_empty() => Permission::Network(host.to_ascii_lowercase()),
+                Some(host) if is_host_pattern(host) => Permission::Network(host.to_ascii_lowercase()),
+                // Requests are matched by host name only, so a scheme, port or path
+                // would make the permission silently never match.
+                Some(host) if !host.is_empty() => {
+                    return Err(format!(
+                        "`{text}` is not a valid network permission: use a host name only, without scheme, port or path, e.g. network:api.example.com, network:*.example.com or network:*"
+                    ));
+                }
                 _ => {
                     return Err(format!(
                         "unknown permission `{text}`. Valid permissions: network:<host>, network:*, secrets:read, fs:read, fs:write"
@@ -119,7 +126,11 @@ impl Manifest {
             && self.name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
             && !self.name.starts_with('-');
         if !valid_name {
-            problem("name", format!("`{}` is not a valid name", self.name), "use lowercase letters, numbers and `-`, e.g. \"totp-generator\"");
+            problem(
+                "name",
+                format!("`{}` is not a valid name", self.name),
+                "use lowercase letters, numbers and `-`, e.g. \"totp-generator\"",
+            );
         }
         if self.description.trim().is_empty() {
             problem("description", "is empty".into(), "describe what the plugin does in one sentence");
@@ -161,6 +172,18 @@ impl Manifest {
     pub fn parsed_permissions(&self) -> Vec<Permission> {
         self.permissions.iter().filter_map(|p| Permission::parse(p).ok()).collect()
     }
+}
+
+/// `*`, a host name, `*.` followed by a domain, or a bracketed IPv6 address.
+fn is_host_pattern(host: &str) -> bool {
+    if host == "*" {
+        return true;
+    }
+    if let Some(ipv6) = host.strip_prefix('[').and_then(|h| h.strip_suffix(']')) {
+        return !ipv6.is_empty() && ipv6.chars().all(|c| c.is_ascii_hexdigit() || c == ':' || c == '.');
+    }
+    let name = host.strip_prefix("*.").unwrap_or(host);
+    !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '.')
 }
 
 fn parse_version(text: &str) -> Option<(u64, u64, u64)> {
@@ -242,5 +265,11 @@ mod tests {
     fn permissions() {
         assert_eq!(Permission::parse("network:API.github.com"), Ok(Permission::Network("api.github.com".into())));
         assert!(Permission::parse("network:").is_err());
+        assert_eq!(Permission::parse("network:*.example.com"), Ok(Permission::Network("*.example.com".into())));
+        assert_eq!(Permission::parse("network:[::1]"), Ok(Permission::Network("[::1]".into())));
+        for unmatchable in ["network:https://api.github.com", "network:localhost:8080", "network:api.github.com/v3", "network:api.*.com"] {
+            let err = Permission::parse(unmatchable).unwrap_err();
+            assert!(err.contains("host name only"), "{unmatchable}: {err}");
+        }
     }
 }

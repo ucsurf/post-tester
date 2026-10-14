@@ -1,0 +1,40 @@
+{
+  "name": "@post-tester/plugin-sdk",
+  "version": "0.1.0",
+  "description": "Types, schema and test helpers for writing post-tester plugins.",
+  "license": "MIT OR Apache-2.0",
+  "type": "module",
+  "main": "./index.js",
+  "types": "./index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "default": "./index.js"
+    },
+    "./testing": {
+      "types": "./testing.d.ts",
+      "default": "./testing.js"
+    },
+    "./globals": {
+      "types": "./globals.d.ts"
+    },
+    "./plugin.schema.json": "./plugin.schema.json",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "testing.js",
+    "testing.d.ts",
+    "globals.d.ts",
+    "plugin.schema.json",
+    "tsconfig.json",
+    "README.md"
+  ],
+  "keywords": ["post-tester", "plugin", "api-client", "sdk"],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/post-tester/post-tester",
+    "directory": "packages/plugin-sdk"
+  }
+}

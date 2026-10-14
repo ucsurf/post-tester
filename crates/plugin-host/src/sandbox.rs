@@ -53,7 +53,14 @@ pub struct HostState {
 }
 
 impl HostState {
-    pub fn new(label: impl Into<String>, source: Source, declared: Vec<Permission>, granted: Vec<Permission>, engine: Weak<Engine>, fs_root: Option<PathBuf>) -> Self {
+    pub fn new(
+        label: impl Into<String>,
+        source: Source,
+        declared: Vec<Permission>,
+        granted: Vec<Permission>,
+        engine: Weak<Engine>,
+        fs_root: Option<PathBuf>,
+    ) -> Self {
         Self { label: label.into(), source, declared, granted, engine, fs_root, current_span: Mutex::new(None) }
     }
 
@@ -76,7 +83,10 @@ impl HostState {
         }
         let name = permission_name(wanted);
         if self.declared.iter().any(covers) {
-            Err(format!("permission `{name}` was not approved for {}. Approve it with `pt plugin approve {}` or in the app's Plugins panel", self.label, self.label))
+            Err(format!(
+                "permission `{name}` was not approved for {}. Approve it with `pt plugin approve {}` or in the app's Plugins panel",
+                self.label, self.label
+            ))
         } else {
             Err(format!("permission denied: {} did not declare `{name}`. Add \"{name}\" to \"permissions\" in plugin.json", self.label))
         }
@@ -140,11 +150,12 @@ impl Sandbox {
         let context = AsyncContext::full(&runtime).await.map_err(|e| e.to_string())?;
 
         let host_state = state.clone();
-        context.async_with(async |ctx| {
-            register_host_functions(&ctx, host_state).catch(&ctx).map_err(|e| e.to_string())?;
-            ctx.eval::<(), _>(PRELUDE).catch(&ctx).map_err(|e| format!("prelude failed: {e}"))
-        })
-        .await?;
+        context
+            .async_with(async |ctx| {
+                register_host_functions(&ctx, host_state).catch(&ctx).map_err(|e| e.to_string())?;
+                ctx.eval::<(), _>(PRELUDE).catch(&ctx).map_err(|e| format!("prelude failed: {e}"))
+            })
+            .await?;
 
         Ok(Self { _runtime: runtime, context, state, deadline, epoch, timeout, lock: tokio::sync::Mutex::new(()) })
     }
@@ -174,27 +185,34 @@ impl Sandbox {
     pub async fn load_plugin(&self, main: &Path) -> Result<(), String> {
         let specifier = main.to_string_lossy().into_owned();
         self.guarded(None, async {
-            self.context.async_with(async |ctx| {
-                let run = async {
-                    let promise = Module::import(&ctx, specifier.clone())?;
-                    let namespace: Object = promise.into_future().await?;
-                    let default: Value = namespace.get("default")?;
-                    ctx.globals().set("__pt_plugin", default.clone())?;
-                    Ok::<_, rquickjs::Error>(default.is_undefined())
-                };
-                match run.await.catch(&ctx) {
-                    Ok(true) => Err(format!("{specifier} must `export default definePlugin({{ ... }})`")),
-                    Ok(false) => Ok(()),
-                    Err(e) => Err(e.to_string()),
-                }
-            })
-            .await
+            self.context
+                .async_with(async |ctx| {
+                    let run = async {
+                        let promise = Module::import(&ctx, specifier.clone())?;
+                        let namespace: Object = promise.into_future().await?;
+                        let default: Value = namespace.get("default")?;
+                        ctx.globals().set("__pt_plugin", default.clone())?;
+                        Ok::<_, rquickjs::Error>(default.is_undefined())
+                    };
+                    match run.await.catch(&ctx) {
+                        Ok(true) => Err(format!("{specifier} must `export default definePlugin({{ ... }})`")),
+                        Ok(false) => Ok(()),
+                        Err(e) => Err(clean_error(&e.to_string())),
+                    }
+                })
+                .await
         })
         .await
     }
 
     /// Calls a plugin capability (see `__pt_dispatch` in the prelude).
-    pub async fn call(&self, span: Option<&Span>, kind: &str, name: &str, payload: &serde_json::Value) -> Result<serde_json::Value, String> {
+    pub async fn call(
+        &self,
+        span: Option<&Span>,
+        kind: &str,
+        name: &str,
+        payload: &serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
         let payload = payload.to_string();
         let json = self.call_global(span, "__pt_call", (kind.to_string(), name.to_string(), payload)).await?;
         serde_json::from_str(&json).map_err(|e| format!("plugin returned invalid data: {e}"))
@@ -215,16 +233,17 @@ impl Sandbox {
     pub async fn run_tests(&self, span: Option<&Span>, test_file: &Path) -> Result<Vec<TestOutcome>, String> {
         let specifier = test_file.to_string_lossy().into_owned();
         self.guarded(span, async {
-            self.context.async_with(async |ctx| {
-                let run = async {
-                    Module::import(&ctx, specifier.clone())?.into_future::<Value>().await?;
-                    let runner: Function = ctx.globals().get("__pt_run_tests")?;
-                    let promise: Promise = runner.call(())?;
-                    promise.into_future::<String>().await
-                };
-                run.await.catch(&ctx).map_err(|e| e.to_string())
-            })
-            .await
+            self.context
+                .async_with(async |ctx| {
+                    let run = async {
+                        Module::import(&ctx, specifier.clone())?.into_future::<Value>().await?;
+                        let runner: Function = ctx.globals().get("__pt_run_tests")?;
+                        let promise: Promise = runner.call(())?;
+                        promise.into_future::<String>().await
+                    };
+                    run.await.catch(&ctx).map_err(|e| clean_error(&e.to_string()))
+                })
+                .await
         })
         .await
         .and_then(|json| serde_json::from_str(&json).map_err(|e| e.to_string()))
@@ -232,15 +251,16 @@ impl Sandbox {
 
     async fn call_global(&self, span: Option<&Span>, function: &str, args: (String, String, String)) -> Result<String, String> {
         self.guarded(span, async {
-            self.context.async_with(async |ctx| {
-                let run = async {
-                    let f: Function = ctx.globals().get(function)?;
-                    let promise: Promise = f.call(args.clone())?;
-                    promise.into_future::<String>().await
-                };
-                run.await.catch(&ctx).map_err(|e| clean_error(&e.to_string()))
-            })
-            .await
+            self.context
+                .async_with(async |ctx| {
+                    let run = async {
+                        let f: Function = ctx.globals().get(function)?;
+                        let promise: Promise = f.call(args.clone())?;
+                        promise.into_future::<String>().await
+                    };
+                    run.await.catch(&ctx).map_err(|e| clean_error(&e.to_string()))
+                })
+                .await
         })
         .await
     }
@@ -256,10 +276,13 @@ pub struct TestOutcome {
     pub detail: Option<String>,
 }
 
-/// Removes the "Error: " prefix and internal prelude frames from messages.
+/// Removes the "Error: " prefix and internal stack frames from messages, so
+/// only frames in the plugin's own files remain.
 fn clean_error(message: &str) -> String {
+    // The prelude is evaluated as `eval_script`; `(native)` frames are engine internals.
+    let internal = |line: &str| ["<input>", "eval_script", "(native)"].iter().any(|marker| line.contains(marker));
     let message = message.strip_prefix("Error: ").unwrap_or(message);
-    message.lines().filter(|l| !l.contains("<input>")).collect::<Vec<_>>().join("\n").trim().to_string()
+    message.lines().filter(|l| !internal(l)).collect::<Vec<_>>().join("\n").trim().to_string()
 }
 
 // ── Host functions ───────────────────────────────────────────────────────────
@@ -283,97 +306,133 @@ fn register_host_functions<'js>(ctx: &Ctx<'js>, state: Arc<HostState>) -> rquick
     let host = Object::new(ctx.clone())?;
 
     let s = state.clone();
-    host.set("log", Function::new(ctx.clone(), move |level: String, text: String| {
-        let level = match level.as_str() {
-            "debug" => Level::Debug,
-            "warn" => Level::Warn,
-            "error" => Level::Error,
-            _ => Level::Info,
-        };
-        match s.span() {
-            Some(span) => span.log(level, format!("[{}] {text}", s.label)),
-            None => tracing::info!(plugin = %s.label, "{text}"),
-        }
-    })?)?;
+    host.set(
+        "log",
+        Function::new(ctx.clone(), move |level: String, text: String| {
+            let level = match level.as_str() {
+                "debug" => Level::Debug,
+                "warn" => Level::Warn,
+                "error" => Level::Error,
+                _ => Level::Info,
+            };
+            match s.span() {
+                Some(span) => span.log(level, format!("[{}] {text}", s.label)),
+                None => tracing::info!(plugin = %s.label, "{text}"),
+            }
+        })?,
+    )?;
 
     let s = state.clone();
-    host.set("progress", Function::new(ctx.clone(), move |done: f64, total: f64| {
-        if let Some(span) = s.span() {
-            span.progress(done.max(0.0) as u32, total.max(0.0) as u32);
-        }
-    })?)?;
+    host.set(
+        "progress",
+        Function::new(ctx.clone(), move |done: f64, total: f64| {
+            if let Some(span) = s.span() {
+                span.progress(done.max(0.0) as u32, total.max(0.0) as u32);
+            }
+        })?,
+    )?;
 
     host.set("uuid", Function::new(ctx.clone(), || uuid::Uuid::new_v4().to_string())?)?;
     host.set("sha256", Function::new(ctx.clone(), |data: String| hex::encode(Sha256::digest(data.as_bytes())))?)?;
-    host.set("hmacSha256", Function::new(ctx.clone(), |key: String, data: String| {
-        let mut mac = Hmac::<Sha256>::new_from_slice(key.as_bytes()).expect("HMAC accepts any key length");
-        mac.update(data.as_bytes());
-        hex::encode(mac.finalize().into_bytes())
-    })?)?;
+    host.set(
+        "hmacSha256",
+        Function::new(ctx.clone(), |key: String, data: String| {
+            let mut mac = Hmac::<Sha256>::new_from_slice(key.as_bytes()).expect("HMAC accepts any key length");
+            mac.update(data.as_bytes());
+            hex::encode(mac.finalize().into_bytes())
+        })?,
+    )?;
     host.set("base64Encode", Function::new(ctx.clone(), |text: String| base64::engine::general_purpose::STANDARD.encode(text))?)?;
-    host.set("base64Decode", Function::new(ctx.clone(), |text: String| {
-        envelope(
-            base64::engine::general_purpose::STANDARD
-                .decode(text.trim())
-                .map_err(|e| format!("invalid base64: {e}"))
-                .map(|bytes| String::from_utf8_lossy(&bytes).into_owned()),
-        )
-    })?)?;
+    host.set(
+        "base64Decode",
+        Function::new(ctx.clone(), |text: String| {
+            envelope(
+                base64::engine::general_purpose::STANDARD
+                    .decode(text.trim())
+                    .map_err(|e| format!("invalid base64: {e}"))
+                    .map(|bytes| String::from_utf8_lossy(&bytes).into_owned()),
+            )
+        })?,
+    )?;
 
     let s = state.clone();
-    host.set("varGet", Function::new(ctx.clone(), move |name: String| {
-        envelope(s.engine().and_then(|engine| {
-            let vars = engine.variables(None, &[]).map_err(|e| e.to_string())?;
-            Ok(vars.get(&name).map(str::to_string))
-        }))
-    })?)?;
+    host.set(
+        "varGet",
+        Function::new(ctx.clone(), move |name: String| {
+            envelope(s.engine().and_then(|engine| {
+                let vars = engine.variables(None, &[]).map_err(|e| e.to_string())?;
+                Ok(vars.get(&name).map(str::to_string))
+            }))
+        })?,
+    )?;
 
     let s = state.clone();
-    host.set("varSet", Function::new(ctx.clone(), move |name: String, value: String| {
-        envelope(s.engine().map(|engine| {
-            engine.set_runtime_variable(&name, &value);
-            if let Some(span) = s.span() {
-                span.emit(EventKind::VariableSet { name, value });
-            }
-        }))
-    })?)?;
+    host.set(
+        "varSet",
+        Function::new(ctx.clone(), move |name: String, value: String| {
+            envelope(s.engine().map(|engine| {
+                engine.set_runtime_variable(&name, &value);
+                if let Some(span) = s.span() {
+                    span.emit(EventKind::VariableSet { name, value });
+                }
+            }))
+        })?,
+    )?;
 
     let s = state.clone();
-    host.set("http", Function::new(ctx.clone(), Async(move |json: String| {
-        let s = s.clone();
-        async move { envelope(host_http(&s, &json).await) }
-    }))?)?;
+    host.set(
+        "http",
+        Function::new(
+            ctx.clone(),
+            Async(move |json: String| {
+                let s = s.clone();
+                async move { envelope(host_http(&s, &json).await) }
+            }),
+        )?,
+    )?;
 
     let s = state.clone();
-    host.set("secretGet", Function::new(ctx.clone(), Async(move |name: String| {
-        let s = s.clone();
-        async move {
-            let result = async {
-                s.require(&Permission::SecretsRead)?;
-                s.engine()?.secrets().get(&name).await.map_err(|e| e.to_string())
-            };
-            envelope(result.await)
-        }
-    }))?)?;
+    host.set(
+        "secretGet",
+        Function::new(
+            ctx.clone(),
+            Async(move |name: String| {
+                let s = s.clone();
+                async move {
+                    let result = async {
+                        s.require(&Permission::SecretsRead)?;
+                        s.engine()?.secrets().get(&name).await.map_err(|e| e.to_string())
+                    };
+                    envelope(result.await)
+                }
+            }),
+        )?,
+    )?;
 
     let s = state.clone();
-    host.set("fsRead", Function::new(ctx.clone(), move |path: String| {
-        envelope(s.require(&Permission::FsRead).and_then(|()| {
-            let full = resolve_fs_path(&s, &path)?;
-            std::fs::read_to_string(&full).map_err(|e| format!("cannot read `{path}`: {e}"))
-        }))
-    })?)?;
+    host.set(
+        "fsRead",
+        Function::new(ctx.clone(), move |path: String| {
+            envelope(s.require(&Permission::FsRead).and_then(|()| {
+                let full = resolve_fs_path(&s, &path)?;
+                std::fs::read_to_string(&full).map_err(|e| format!("cannot read `{path}`: {e}"))
+            }))
+        })?,
+    )?;
 
     let s = state;
-    host.set("fsWrite", Function::new(ctx.clone(), move |path: String, content: String| {
-        envelope(s.require(&Permission::FsWrite).and_then(|()| {
-            let full = resolve_fs_path(&s, &path)?;
-            if let Some(parent) = full.parent() {
-                std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-            }
-            std::fs::write(&full, content).map_err(|e| format!("cannot write `{path}`: {e}"))
-        }))
-    })?)?;
+    host.set(
+        "fsWrite",
+        Function::new(ctx.clone(), move |path: String, content: String| {
+            envelope(s.require(&Permission::FsWrite).and_then(|()| {
+                let full = resolve_fs_path(&s, &path)?;
+                if let Some(parent) = full.parent() {
+                    std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+                }
+                std::fs::write(&full, content).map_err(|e| format!("cannot write `{path}`: {e}"))
+            }))
+        })?,
+    )?;
 
     ctx.globals().set("__host", host)
 }
@@ -383,10 +442,20 @@ fn resolve_fs_path(state: &HostState, path: &str) -> Result<PathBuf, String> {
     let root = state.fs_root.as_ref().ok_or("no workspace is open, so ctx.fs is not available")?;
     let relative = Path::new(path);
     let escapes = relative.is_absolute() || relative.components().any(|c| matches!(c, Component::ParentDir | Component::Prefix(_)));
+    let outside = || format!("`{path}` is outside the workspace; use a path relative to the workspace folder");
     if escapes {
-        return Err(format!("`{path}` is outside the workspace; use a path relative to the workspace folder"));
+        return Err(outside());
     }
-    Ok(root.join(relative))
+    // A symbolic link inside the workspace may point outside it, so compare real
+    // paths: the file itself if it exists, otherwise its nearest existing folder.
+    let full = root.join(relative);
+    let real_root = root.canonicalize().map_err(|e| format!("cannot open the workspace folder: {e}"))?;
+    let existing = full.ancestors().find(|p| p.exists()).unwrap_or(root);
+    let real = existing.canonicalize().map_err(|e| format!("cannot resolve `{path}`: {e}"))?;
+    if !real.starts_with(&real_root) {
+        return Err(outside());
+    }
+    Ok(full)
 }
 
 #[derive(Deserialize)]
@@ -405,7 +474,8 @@ async fn host_http(state: &HostState, json: &str) -> Result<serde_json::Value, S
     state.require(&Permission::Network(host.to_ascii_lowercase()))?;
     let engine = state.engine()?;
 
-    let summary = Summary { protocol: Some("http".into()), method: Some(call.method.clone()), url: Some(call.url.clone()), request_id: None };
+    let summary =
+        Summary { protocol: Some("http".into()), method: Some(call.method.clone()), url: Some(call.url.clone()), request_id: None };
     let title = format!("{}: {} {}", state.label, call.method, call.url);
     let span = match state.span() {
         Some(parent) => Span::start(engine.bus(), state.source.clone(), Some(parent.id()), SpanKind::Request, title, summary),
@@ -445,11 +515,8 @@ struct ModuleLoader {
 
 impl ModuleLoader {
     fn find_file(&self, base: &str, name: &str) -> Option<PathBuf> {
-        let candidate = if Path::new(name).is_absolute() {
-            PathBuf::from(name)
-        } else {
-            Path::new(base).parent().unwrap_or(Path::new("")).join(name)
-        };
+        let candidate =
+            if Path::new(name).is_absolute() { PathBuf::from(name) } else { Path::new(base).parent().unwrap_or(Path::new("")).join(name) };
         let candidates = [
             candidate.clone(),
             candidate.with_extension("ts"),
@@ -466,7 +533,13 @@ impl ModuleLoader {
 }
 
 impl Resolver for ModuleLoader {
-    fn resolve<'js>(&mut self, _ctx: &Ctx<'js>, base: &str, name: &str, _attributes: Option<ImportAttributes<'js>>) -> rquickjs::Result<String> {
+    fn resolve<'js>(
+        &mut self,
+        _ctx: &Ctx<'js>,
+        base: &str,
+        name: &str,
+        _attributes: Option<ImportAttributes<'js>>,
+    ) -> rquickjs::Result<String> {
         if name == SDK_NAME || name == TESTING_NAME {
             return Ok(name.to_string());
         }
@@ -487,7 +560,12 @@ impl Resolver for ModuleLoader {
 }
 
 impl Loader for ModuleLoader {
-    fn load<'js>(&mut self, ctx: &Ctx<'js>, name: &str, _attributes: Option<ImportAttributes<'js>>) -> rquickjs::Result<Module<'js, rquickjs::module::Declared>> {
+    fn load<'js>(
+        &mut self,
+        ctx: &Ctx<'js>,
+        name: &str,
+        _attributes: Option<ImportAttributes<'js>>,
+    ) -> rquickjs::Result<Module<'js, rquickjs::module::Declared>> {
         let source = match name {
             SDK_NAME => SDK_MODULE.to_string(),
             TESTING_NAME => TESTING_MODULE.to_string(),
@@ -516,5 +594,9 @@ mod tests {
     #[test]
     fn errors_are_cleaned() {
         assert_eq!(clean_error("Error: boom\n    at run (<input>:3)"), "boom");
+        assert_eq!(
+            clean_error("bad input\n    at run (/p/index.js:3:65)\n    at <anonymous> (eval_script:201:108)\n    at Function (native)"),
+            "bad input\n    at run (/p/index.js:3:65)"
+        );
     }
 }

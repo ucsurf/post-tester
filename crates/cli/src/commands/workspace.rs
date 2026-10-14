@@ -73,6 +73,39 @@ pub async fn import(workspace: Option<&Path>, args: ImportArgs) -> Result<ExitCo
     Ok(ExitCode::SUCCESS)
 }
 
+#[derive(Debug, Args)]
+pub struct ExportArgs {
+    /// Folder id to export (default: the whole workspace).
+    #[arg(default_value = "")]
+    folder: String,
+    /// The plugin exporter, e.g. `markdown-exporter/markdown`.
+    #[arg(short = 't', long = "to")]
+    exporter: String,
+    /// Write to a file instead of stdout.
+    #[arg(short, long)]
+    output: Option<PathBuf>,
+}
+
+pub async fn export(workspace: Option<&Path>, args: ExportArgs) -> Result<ExitCode> {
+    let ctx = Context::open(workspace, true).await?;
+    let ws = ctx.workspace()?;
+    let tree = ws.tree()?;
+    let Some(folder) = tree.find(&args.folder) else { bail!("folder `{}` does not exist", args.folder) };
+    let requests = folder.request_ids().into_iter().map(|id| ws.read_request(&id).map(|r| (id, r))).collect::<Result<Vec<_>, _>>()?;
+    if ctx.plugins.export_targets().is_empty() {
+        bail!("no exporter plugins are installed. Try `pt plugin install examples/plugins/markdown-exporter`");
+    }
+    let content = ctx.plugins.export(&args.exporter, &folder.name, &requests).await?;
+    match args.output {
+        Some(path) => {
+            std::fs::write(&path, content).with_context(|| format!("cannot write {}", path.display()))?;
+            println!("{} Exported {} request(s) to {}", style::green("✓"), requests.len(), path.display());
+        }
+        None => print!("{content}"),
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
 #[derive(Debug, Subcommand)]
 pub enum EnvCommand {
     /// List environments.

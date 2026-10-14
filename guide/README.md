@@ -16,13 +16,32 @@ and automating API requests across many protocols.
 - **AI-ready.** AI agents can use post-tester through MCP, and post-tester can
   connect to and test MCP servers.
 
+## Getting started
+
+Build from source (Rust 1.97+ and Node.js with pnpm):
+
+```bash
+pnpm install && pnpm --filter web build   # the web UI
+cargo install --path crates/cli           # installs `pt`
+```
+
+Then:
+
+```bash
+pt init my-api && cd my-api   # create a workspace
+pt send examples/get-ip       # send the sample request, live in the terminal
+pt serve                      # open the app in your browser
+```
+
+The desktop app is in `apps/desktop` (see its README).
+
 ## Concepts
 
 | Concept | What it is |
 |---|---|
 | **Workspace** | A folder containing your collections, environments and settings |
 | **Collection** | A folder of saved requests, which can be nested |
-| **Request** | One API call (HTTP, GraphQL, gRPC, WebSocket, SSE, MCP, …) |
+| **Request** | One API call: HTTP, GraphQL, Server-Sent Events, WebSocket or MCP |
 | **Environment** | A named set of variables, such as `staging` or `production` |
 | **Secret** | A sensitive value kept in your system keychain, referenced as `{{secret:name}}` |
 | **Live Activity** | A real-time view of everything happening: requests, test runs, plugins and AI agents |
@@ -53,4 +72,6 @@ Every action appears in the Live Activity panel as it happens, with:
 
 ## Guides
 
+- [Command line](cli.md): every `pt` command, request files, tests and CI
+- [AI agents and MCP](mcp.md): connect an AI agent, and test MCP servers
 - [Plugins](plugins/README.md): how to build a plugin (for people and AI agents)

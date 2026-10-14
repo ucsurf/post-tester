@@ -1,0 +1,141 @@
+# Command line: `pt`
+
+> **Status: early development.** Commands and options may change before 1.0.
+
+`pt` runs everything post-tester can do from a terminal: sending requests,
+running collections in CI, load tests, the app server and the MCP server.
+Every command shows what happens **live**, as it happens.
+
+```text
+$ pt send examples/get-ip
+→ Get my IP
+  GET https://httpbin.org/ip
+  DNS 3 ms · Connect 152 ms · TLS 308 ms · Waiting 149 ms · Download 0 ms
+← 200 OK  HTTP/2  31 B
+  ✓ status == 200
+  ✓ json($.origin) exists
+  616 ms
+```
+
+## Workspaces
+
+| Command | What it does |
+|---|---|
+| `pt init [dir] [--name N]` | Create a workspace with a sample request and a `local` environment |
+| `pt env list` | List environments (the default is marked) |
+| `pt env show <name>` | Show an environment's variables |
+| `pt import <file\|-> [--into folder]` | Import a cURL command, Postman collection, OpenAPI 3 document, or a format provided by a plugin |
+
+Commands find the workspace in the current folder or its parents. Use
+`--workspace <dir>` (or `PT_WORKSPACE`) to point somewhere else.
+
+## Sending requests
+
+| Command | What it does |
+|---|---|
+| `pt send <id\|url>` | Send a saved request (e.g. `auth/login`) or a URL |
+| `pt load <id\|url> -c 10 -n 500` | Send a request 500 times, 10 at a time, and report latency percentiles |
+| `pt codegen <id\|url> -t python-requests` | Print code that sends the request (`curl`, `javascript-fetch`, `python-requests`, or a plugin's `plugin/name`) |
+
+Options for a URL: `-X METHOD`, `-H 'Name: value'` (repeatable), `-d BODY`
+(JSON bodies get `Content-Type: application/json`). Common options:
+`-e <environment>`, `-v` (show headers), `--json` (machine-readable result),
+`--no-body`.
+
+## Running collections and CI
+
+```bash
+pt run                         # every request in the workspace
+pt run auth                    # every request in collections/auth/
+pt run -r auth/login -r users/me
+pt run --bail --iterations 3 --delay 200
+pt run --reporter junit --output results.xml
+pt run --reporter json > results.json
+```
+
+Requests run in file-name order (prefix files with `01-`, `02-` to control it).
+Variables extracted by one request (`extract:`) are available to the next.
+
+**Exit codes:** `0` everything passed · `1` a test failed or a request failed ·
+`2` a usage or setup error.
+
+**Secrets in CI:** set `PT_SECRET_<NAME>` environment variables, e.g.
+`PT_SECRET_API_KEY` for `{{secret:api-key}}`. They take precedence over the keychain.
+
+## Secrets
+
+```bash
+pt secret set api-key            # reads the value from stdin
+pt secret delete api-key
+```
+
+Secrets are stored in the OS keychain and referenced in requests as
+`{{secret:api-key}}`. They are never written to workspace files, and are
+shown as `•••` in previews and generated code.
+
+## The app and AI agents
+
+| Command | What it does |
+|---|---|
+| `pt serve [--port 7777] [--no-open] [--read-only]` | Start the local server and open the app in your browser |
+| `pt mcp [--read-only]` | Serve MCP over stdio for AI agents (see [mcp.md](mcp.md)) |
+
+`pt serve` prints a link that contains a session token. The server only
+listens on `127.0.0.1` and rejects requests without the token or from other
+websites.
+
+## Plugins
+
+| Command | What it does |
+|---|---|
+| `pt plugin new <type> <name>` | Create a plugin from a working template |
+| `pt plugin validate [dir]` | List every problem with a fix |
+| `pt plugin test [dir]` | Run the plugin's `*.test.ts` files |
+| `pt plugin install <dir> [--yes]` | Add it to the workspace and review its permissions |
+| `pt plugin approve <name>` | Approve the permissions a plugin asks for |
+| `pt plugin list` / `pt plugin remove <name>` | Manage installed plugins |
+
+See the [plugin guide](plugins/README.md).
+
+## Request files
+
+A request is a YAML file in `collections/`. Only `url` is required.
+
+```yaml
+name: Create user
+method: POST
+url: "{{baseUrl}}/users"
+headers:
+  - { key: X-Trace, value: "{{$uuid}}" }
+body:
+  type: json            # none, text, json, form, graphql
+  content: '{"name": "Ada"}'
+auth:
+  type: bearer          # none, basic, bearer, api_key, plugin
+  token: "{{secret:api-token}}"
+tests:
+  - status == 201
+  - json($.id) exists
+  - header(content-type) contains json
+  - time < 500
+extract:
+  userId: json($.id)
+scripts:
+  after_response: |
+    pm.test("has a name", () => pm.expect(pm.response.json().name).to.equal("Ada"));
+options:
+  timeout_ms: 30000
+  follow_redirects: true
+  verify_tls: true
+```
+
+**Test subjects:** `status`, `time`, `size`, `body`, `header(name)`,
+`json($.path)`. **Operators:** `==` `!=` `<` `<=` `>` `>=` `contains`
+`exists` `matches`, and the negations `!contains` `!exists` `!matches`.
+
+**Template values:** `{{variable}}`, `{{secret:name}}`, `{{$uuid}}`,
+`{{$timestamp}}`, `{{$timestampMs}}`, `{{$isoTimestamp}}`, `{{$randomInt}}`,
+and functions from plugins such as `{{totp(secret: "...")}}`.
+
+Folders can hold a `_folder.yaml` with `headers`, `auth` and `variables`
+shared by every request inside them.

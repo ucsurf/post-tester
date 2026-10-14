@@ -51,6 +51,7 @@ pub struct Request {
     pub options: RequestOptions,
     /// Saved example responses. `pt mock` serves them as a mock API.
     #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[ts(as = "Option<Vec<Example>>", optional)]
     pub examples: Vec<Example>,
 }
 

@@ -50,6 +50,10 @@ jobs:
       # The desktop app needs system WebView libraries; it is built in its own job.
       - run: cargo clippy --workspace --exclude post-tester-desktop --all-targets -- -D warnings
       - run: cargo test --workspace --exclude post-tester-desktop
+      # `cargo test` regenerates the TypeScript types the UI uses; they must be committed.
+      - name: Check TypeScript bindings are up to date
+        if: runner.os == 'Linux'
+        run: git diff --exit-code -- packages/bindings
 
   desktop:
     name: Desktop app (${{ matrix.os }})

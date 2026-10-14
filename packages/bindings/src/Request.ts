@@ -38,4 +38,4 @@ extract: Record<string, string>, options: RequestOptions,
 /**
  * Saved example responses. `pt mock` serves them as a mock API.
  */
-examples: Array<Example>, };
+examples?: Array<Example>, };

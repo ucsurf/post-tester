@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="520" height="120" viewBox="0 0 520 120" role="img" aria-label="post-tester">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#6366f1"/>
+      <stop offset="1" stop-color="#14b8a6"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Icon: a request arrow with a live pulse line -->
+  <rect x="10" y="10" width="100" height="100" rx="24" fill="url(#bg)"/>
+  <polyline points="28,66 44,66 52,48 62,82 70,58 76,66 84,66"
+            fill="none" stroke="#ffffff" stroke-width="6"
+            stroke-linecap="round" stroke-linejoin="round"/>
+  <polyline points="80,52 94,66 80,80"
+            fill="none" stroke="#ffffff" stroke-width="6"
+            stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- Wordmark -->
+  <text x="136" y="68" fill="#f1f5f9"
+        font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif"
+        font-size="48" font-weight="700" letter-spacing="-1">post-tester</text>
+  <text x="138" y="96" fill="#94a3b8"
+        font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif"
+        font-size="17">Build, send, test and watch your APIs live</text>
+</svg>

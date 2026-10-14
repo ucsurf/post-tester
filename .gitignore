@@ -874,3 +874,127 @@ malware-report-*
 local.*  
 !local.example.*  
 .local/
+
+
+# ==============================================================================
+# 16. PROJECT DOCS (kept local)
+# ==============================================================================
+docs/
+
+
+# ==============================================================================
+# 17. RUST / CARGO
+# ==============================================================================
+# Cargo.lock is intentionally TRACKED — this repo ships apps and binaries.
+target/
+**/*.rs.bk
+*.pdb
+.cargo/credentials
+.cargo/credentials.toml
+mutants.out/
+mutants.out.old/
+# Profiling & coverage
+*.profraw
+*.profdata
+perf.data
+perf.data.old
+flamegraph.svg
+lcov.info
+tarpaulin-report.html
+tarpaulin-report.json
+cobertura.xml
+# WASM build output (wasm-pack)
+crates/**/pkg/
+# Nix build outputs
+result
+result-*
+
+
+# ==============================================================================
+# 18. TAURI (desktop + mobile)
+# ==============================================================================
+src-tauri/target/
+**/src-tauri/target/
+**/src-tauri/gen/schemas/
+# Updater signing keys (private) — keep the .pub, never the private key
+*.tauri.key
+.tauri/
+
+# --- Android (src-tauri/gen/android) ------------------------------------------
+.gradle/
+.kotlin/
+.externalNativeBuild/
+.cxx/
+captures/
+*.apk
+*.aab
+*.ap_
+*.dex
+*.hprof
+**/src-tauri/gen/android/app/src/main/jniLibs/
+key.properties
+keystore.properties
+google-services.json
+
+# --- iOS / macOS (src-tauri/gen/apple) ----------------------------------------
+**/src-tauri/gen/apple/Externals/
+DerivedData/
+*.ipa
+*.xcarchive
+*.dSYM
+*.dSYM.zip
+*.mobileprovision
+*.provisionprofile
+*.p8
+*.cer
+*.certSigningRequest
+GoogleService-Info.plist
+Pods/
+fastlane/report.xml
+fastlane/Preview.html
+fastlane/screenshots/**/*.png
+fastlane/test_output/
+
+# --- Release bundles (normally inside target/, listed in case of manual copies)
+*.AppImage
+*.app/
+*.nsis.zip
+*.msi.zip
+*.app.tar.gz.sig
+*.AppImage.tar.gz.sig
+
+
+# ==============================================================================
+# 19. FRONTEND TESTING (Playwright / Vitest / WebdriverIO)
+# ==============================================================================
+test-results/
+playwright-report/
+blob-report/
+playwright/.cache/
+playwright/.auth/
+.vitest/
+__screenshots__/diff/
+wdio-logs/
+
+
+# ==============================================================================
+# 20. POST-TESTER RUNTIME DATA
+# ==============================================================================
+# Local app state, request history and captured traffic can contain tokens,
+# cookies and API keys — never commit them.
+.post-tester/
+.pt/
+*.har
+!**/fixtures/**/*.har
+*.private.yaml
+*.private.yml
+*.private.json
+*.secret.yaml
+*.secret.yml
+*.secret.json
+**/environments/*.local.*
+# Load-test, mock-server and runner output
+load-results/
+loadtest-results/
+run-results/
+*.jtl

@@ -19,6 +19,14 @@ const LAST_WORKSPACE_FILE: &str = "last-workspace.txt";
 struct AppState {
     engine: Arc<Engine>,
     plugins: Arc<PluginHost>,
+    /// Relays work started elsewhere (terminal, AI agents over stdio) for the open workspace.
+    follower: std::sync::Mutex<Option<tauri::async_runtime::JoinHandle<()>>>,
+}
+
+/// Starts relaying events from other post-tester processes for `workspace`.
+fn follow(engine: &Engine, workspace: &Workspace) -> Option<tauri::async_runtime::JoinHandle<()>> {
+    let dir = workspace.local_dir().ok()?;
+    Some(tauri::async_runtime::spawn(post_tester_core::history::follower(engine.bus(), &dir)))
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -49,7 +57,8 @@ pub fn run() {
 
             #[cfg(desktop)]
             desktop::install_menu(app)?;
-            app.manage(AppState { engine, plugins });
+            let follower = std::sync::Mutex::new(follow(&engine, &workspace));
+            app.manage(AppState { engine, plugins, follower });
             Ok(())
         })
         .run(tauri::generate_context!())
@@ -135,6 +144,12 @@ mod desktop {
                 Ok(workspace) => {
                     let state = app.state::<AppState>();
                     state.engine.set_workspace(Some(workspace.clone()));
+                    let mut follower = state.follower.lock().expect("follower lock poisoned");
+                    if let Some(old) = follower.take() {
+                        old.abort();
+                    }
+                    *follower = super::follow(&state.engine, &workspace);
+                    drop(follower);
                     let plugins = state.plugins.clone();
                     for plugin in plugins.plugins() {
                         plugins.unload(&plugin.manifest.name);

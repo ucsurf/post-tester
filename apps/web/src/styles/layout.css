@@ -1,0 +1,207 @@
+/* App shell: sidebar | main (tabs + content) | Live Activity (right or bottom). */
+
+.shell {
+  display: flex;
+  height: 100vh;
+  min-width: 0;
+}
+
+.shell-sidebar {
+  flex-shrink: 0;
+  min-width: 0;
+}
+
+.workarea {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+.workarea.dock-right {
+  flex-direction: row;
+}
+
+.workarea.dock-bottom {
+  flex-direction: column;
+}
+
+.main {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+.activity-dock {
+  flex-shrink: 0;
+  min-width: 0;
+  min-height: 0;
+}
+
+.dock-bottom .activity-dock {
+  width: 100%;
+}
+
+.activity-reopen {
+  position: absolute;
+  right: var(--space-6);
+  bottom: var(--space-6);
+  z-index: 10;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-4);
+  height: 30px;
+  padding: 0 var(--space-5);
+  border: 1px solid var(--border-strong);
+  border-radius: 15px;
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.tabbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: 36px;
+  padding: 0 var(--space-3);
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-subtle);
+  overflow-x: auto;
+  scrollbar-width: thin;
+  flex-shrink: 0;
+}
+
+.doc-tab {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  max-width: 220px;
+  height: 28px;
+  padding: 0 var(--space-2) 0 var(--space-4);
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.doc-tab:hover {
+  background: var(--bg-hover);
+}
+
+.doc-tab[aria-selected="true"] {
+  border-color: var(--border);
+  background: var(--bg);
+  color: var(--text);
+  box-shadow: var(--shadow-sm);
+}
+
+.doc-tab .method {
+  min-width: 0;
+  font-size: 10px;
+}
+
+.doc-tab-close {
+  opacity: 0;
+}
+
+.doc-tab:hover .doc-tab-close,
+.doc-tab[aria-selected="true"] .doc-tab-close {
+  opacity: 1;
+}
+
+.tab-content {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.welcome {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  padding: var(--space-7);
+  overflow: auto;
+}
+
+.welcome-card {
+  max-width: 560px;
+  gap: var(--space-6);
+}
+
+.welcome-card h1 {
+  font-size: 22px;
+}
+
+.welcome-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+}
+
+.shortcuts {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--space-3) var(--space-5);
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+
+.shortcuts dd {
+  margin: 0;
+}
+
+.screen {
+  display: grid;
+  place-items: center;
+  height: 100vh;
+  padding: var(--space-6);
+  overflow: auto;
+}
+
+.screen-card {
+  max-width: 560px;
+  gap: var(--space-5);
+}
+
+.screen-card h1 {
+  font-size: var(--text-xl);
+}
+
+.dirty-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--warning);
+  flex-shrink: 0;
+}
+
+/* Full-page panels (environments, plugins, MCP, agent). */
+
+.panel-page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  height: 100%;
+  overflow: auto;
+  padding: var(--space-6) var(--space-7) var(--space-7);
+}
+
+.panel-header {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  max-width: 820px;
+}
+
+.panel-header h1 {
+  font-size: var(--text-xl);
+}

@@ -9,9 +9,11 @@
 //! | [`routes`]  | The HTTP API, grouped by topic                     |
 //! | [`views`]   | JSON shapes of engine results                      |
 //! | [`assets`]  | The embedded web UI                                |
+//! | [`mock`]    | A mock API built from saved example responses      |
 
 pub mod assets;
 pub mod error;
+pub mod mock;
 pub mod routes;
 pub mod security;
 pub mod state;

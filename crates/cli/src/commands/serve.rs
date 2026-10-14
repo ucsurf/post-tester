@@ -26,6 +26,9 @@ pub struct ServeArgs {
 
 pub async fn serve(workspace: Option<&Path>, args: ServeArgs) -> Result<ExitCode> {
     let ctx = Context::open(workspace, false).await?;
+    // Show work started elsewhere (`pt run` in a terminal, AI agents over stdio) live in the app.
+    let _follower =
+        ctx.engine.workspace().and_then(|ws| ws.local_dir().ok()).map(|dir| post_tester_core::history::follow(ctx.engine.bus(), &dir));
     let mcp = post_tester_mcp::ServerOptions { read_only: args.read_only };
     let config = ServerConfig { host: args.host, port: args.port, token: None, mcp };
     let server = start_server(config, ctx.engine.clone(), ctx.plugins.clone()).await?;
@@ -55,6 +58,44 @@ pub async fn serve(workspace: Option<&Path>, args: ServeArgs) -> Result<ExitCode
         result = server.task => { result??; }
         _ = tokio::signal::ctrl_c() => println!("\nStopped."),
     }
+    Ok(ExitCode::SUCCESS)
+}
+
+#[derive(Debug, Args)]
+pub struct MockArgs {
+    /// Folder whose examples to serve (default: the whole workspace).
+    #[arg(default_value = "")]
+    folder: String,
+    #[arg(long, default_value_t = 4010)]
+    port: u16,
+    /// Environment for variables used in example responses.
+    #[arg(short = 'e', long)]
+    environment: Option<String>,
+}
+
+pub async fn mock(workspace: Option<&Path>, args: MockArgs) -> Result<ExitCode> {
+    let ctx = Context::open(workspace, true).await?;
+    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], args.port));
+    let printer = crate::printer::LivePrinter::start(ctx.engine.bus(), crate::printer::PrintOptions::default());
+    let running = post_tester_server::mock::start(ctx.engine.clone(), &args.folder, args.environment, addr).await?;
+    if running.routes.is_empty() {
+        anyhow::bail!("no request in this folder has examples. Add `examples:` to a request file (see guide/cli.md)");
+    }
+    println!();
+    println!("  {} on http://{}", style::bold("Mock API"), running.addr);
+    println!();
+    for route in &running.routes {
+        let names: Vec<&str> = route.examples.iter().map(|e| e.name.as_str()).collect();
+        println!("  {:<7} {:<32} {}", route.method, route.path, style::dimmed(names.join(", ")));
+    }
+    println!();
+    println!("  Pick an example with the header `{}: <name>`. Press Ctrl+C to stop.", post_tester_server::mock::EXAMPLE_HEADER);
+    println!();
+    tokio::select! {
+        result = running.task => { result??; }
+        _ = tokio::signal::ctrl_c() => println!("\nStopped."),
+    }
+    printer.finish().await;
     Ok(ExitCode::SUCCESS)
 }
 

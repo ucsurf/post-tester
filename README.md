@@ -29,8 +29,29 @@
 ---
 
 > [!WARNING]
-> **post-tester is in early development and not ready for use yet.**
-> Everything below describes the planned design, which may change before the first release.
+> **post-tester is in early development.** It works, but expect rough edges, and
+> file formats and APIs may change before 1.0. Features marked *planned* are not built yet.
+
+## 🚀 Quick start
+
+```bash
+# Build from source (Rust 1.97+, Node.js and pnpm)
+pnpm install && pnpm --filter web build
+cargo install --path crates/cli
+
+pt init my-api && cd my-api     # create a workspace
+pt send examples/get-ip         # send a request and watch it live
+pt serve                        # open the app in your browser
+```
+
+```text
+→ Get my IP
+  GET https://httpbin.org/ip
+  DNS 3 ms · Connect 152 ms · TLS 308 ms · Waiting 149 ms · Download 0 ms
+← 200 OK  HTTP/2  31 B
+  ✓ status == 200
+  ✓ json($.origin) exists
+```
 
 ## ✨ Features
 
@@ -62,28 +83,29 @@
     </td>
     <td valign="top">
       <h3>🖥️ Runs everywhere</h3>
-      Desktop, browser, team server, mobile and CI, all powered by one engine.
+      Browser, desktop app, terminal and CI, all powered by one engine. Mobile builds are prepared but not yet tested.
     </td>
   </tr>
 </table>
 
 ### Protocols
 
-| Protocol | | Protocol | |
+| Protocol | Status | Protocol | Status |
 |---|:-:|---|:-:|
-| HTTP / REST | ✅ planned | gRPC | ✅ planned |
-| GraphQL | ✅ planned | MQTT | ✅ planned |
-| WebSocket | ✅ planned | MCP | ✅ planned |
-| Server-Sent Events | ✅ planned | Your own | 🔌 via plugin |
+| HTTP/1.1 and HTTP/2 | ✅ | MCP (server and client) | ✅ |
+| GraphQL | ✅ | gRPC | planned |
+| WebSocket | ✅ | MQTT | planned |
+| Server-Sent Events | ✅ (streamed live) | | |
 
 ### Testing & automation
 
-- **Scripts and tests** that run before requests and after responses
-- **Collection runner** for the app, the terminal and CI pipelines
-- **Flows** that chain requests together, e.g. log in → get a token → call the API
-- **Mock server** built from your collections
-- **Load testing** from any request or flow
-- **Response diff** between runs or environments
+- **Tests** in one line each: `status == 200`, `json($.id) exists`, `time < 500`
+- **Scripts** before requests and after responses, with Postman-compatible `pm.*`
+- **Chaining**: extract values (`token: json($.token)`) and use them in the next request
+- **Collection runner** for the app, the terminal and CI (JSON and JUnit reports)
+- **Load testing** from any request, with p50/p90/p99 latency
+- **Import** cURL, Postman collections and OpenAPI 3; **code generation** for cURL, JavaScript and Python
+- *Planned:* mock server, response diff, visual flows
 
 ## 📡 Live Activity
 
@@ -161,9 +183,32 @@ post-tester supports the [Model Context Protocol](https://modelcontextprotocol.i
 | Guide | Description |
 |---|---|
 | [Overview](guide/README.md) | Core ideas, concepts and workspace layout |
+| [Command line](guide/cli.md) | Every `pt` command, request files, tests and CI |
+| [AI agents and MCP](guide/mcp.md) | Connect an AI agent, and test MCP servers |
 | [Building plugins](guide/plugins/README.md) | Everything needed to create a plugin, for people and AI agents |
+| [Desktop and mobile app](apps/desktop/README.md) | Running and packaging the native app |
+| [Local server API](crates/server/API.md) | The HTTP and WebSocket API behind the app |
+
+## 🧱 Project layout
+
+| Path | What it is |
+|---|---|
+| `crates/core` | The engine: requests, live events, tests, runner, import, codegen |
+| `crates/plugin-host` | Sandboxed JavaScript runtime for plugins and scripts |
+| `crates/mcp` | MCP server (for AI agents) and MCP client (for testing MCP servers) |
+| `crates/server` | Local HTTP/WebSocket server that serves the app |
+| `crates/cli` | The `pt` command |
+| `apps/web` | The web UI |
+| `apps/desktop` | The desktop/mobile app (Tauri) |
+| `packages/plugin-sdk` | Types and helpers for plugin authors |
+| `examples/plugins` | One working example plugin per type |
 
 ## 🤝 Contributing
 
-post-tester is at a very early stage. Ideas, feedback and issues are welcome.
-Contribution guidelines will be added as the project takes shape.
+post-tester is at an early stage. Ideas, feedback and issues are welcome.
+
+```bash
+cargo test --workspace --exclude post-tester-desktop   # Rust tests
+pnpm --filter web test                                 # UI tests
+pnpm --filter web dev                                  # UI with hot reload (run `pt serve` too)
+```

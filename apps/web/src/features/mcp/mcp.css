@@ -1,0 +1,150 @@
+/* MCP client and "connect an agent" panels. */
+
+.mcp-page {
+  /* The layout follows the room this panel actually has (Live Activity may take part of the window). */
+  container-type: inline-size;
+}
+
+.mcp-layout {
+  display: grid;
+  grid-template-columns: 320px 1fr;
+  gap: var(--space-6);
+  align-items: start;
+}
+
+.mcp-main {
+  min-width: 0;
+}
+
+.mcp-session h2 {
+  font-size: var(--text-lg);
+}
+
+.mcp-session .tabs {
+  padding: 0;
+}
+
+.mcp-tab {
+  min-height: 240px;
+}
+
+.mcp-split {
+  display: grid;
+  grid-template-columns: minmax(180px, 260px) minmax(0, 1fr);
+  gap: var(--space-6);
+  padding-top: var(--space-5);
+}
+
+.session-list,
+.item-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  max-height: 480px;
+  overflow: auto;
+}
+
+.session-list button,
+.item-list button {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  width: 100%;
+  padding: var(--space-3) var(--space-4);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.session-list button {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.session-list button:hover,
+.item-list button:hover {
+  background: var(--bg-hover);
+}
+
+.session-list button[aria-current="true"],
+.item-list button[aria-current="true"] {
+  background: var(--accent-soft);
+}
+
+.mcp-result {
+  padding: var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-subtle);
+  overflow: auto;
+  max-height: 480px;
+}
+
+.mcp-result.is-error {
+  border-color: var(--danger);
+  background: var(--danger-soft);
+}
+
+.agent-option h2 {
+  font-size: var(--text-lg);
+}
+
+.command {
+  position: relative;
+}
+
+.command .btn {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  background: var(--bg-elevated);
+}
+
+.command pre {
+  padding-right: 90px;
+}
+
+details summary {
+  cursor: pointer;
+}
+
+details[open] summary {
+  margin-bottom: var(--space-4);
+}
+
+.mcp-session-header {
+  flex-wrap: wrap;
+}
+
+.mcp-session-header > button {
+  flex-shrink: 0;
+}
+
+.mcp-transport {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.mcp-instructions summary,
+.mcp-new-connection summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.mcp-instructions p {
+  margin: var(--space-2) 0 0;
+  white-space: pre-wrap;
+}
+
+@container (max-width: 900px) {
+  .mcp-layout,
+  .mcp-split {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

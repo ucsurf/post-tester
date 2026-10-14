@@ -49,6 +49,35 @@ pub struct Request {
     pub extract: OrderedMap,
     #[serde(skip_serializing_if = "RequestOptions::is_default")]
     pub options: RequestOptions,
+    /// Saved example responses. `pt mock` serves them as a mock API.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub examples: Vec<Example>,
+}
+
+/// A saved example response.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields)]
+#[ts(export)]
+pub struct Example {
+    pub name: String,
+    #[serde(default = "ok_status")]
+    pub status: u16,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub headers: Vec<KeyValue>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub body: String,
+    /// Wait this long before answering, to simulate a slow server.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    #[ts(optional, as = "Option<u32>")]
+    pub delay_ms: u64,
+}
+
+fn ok_status() -> u16 {
+    200
+}
+
+fn is_zero(n: &u64) -> bool {
+    *n == 0
 }
 
 /// HTTP method. Any token is allowed, so custom methods work too.

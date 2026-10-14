@@ -76,24 +76,32 @@ impl EventBus {
 
     /// Publishes an event to every subscriber and returns it.
     pub fn emit(&self, span_id: SpanId, parent_id: Option<SpanId>, source: &Source, kind: EventKind) -> Arc<Event> {
+        let event = Event { seq: 0, span_id, parent_id, source: source.clone(), at: chrono::Utc::now(), kind };
+        self.publish(event, true)
+    }
+
+    /// Publishes an event that happened in another post-tester process (e.g. a
+    /// `pt` command in a terminal). It gets a new sequence number here, and is
+    /// not written to sinks, because the other process already recorded it.
+    pub fn relay(&self, event: Event) -> Arc<Event> {
+        self.publish(event, false)
+    }
+
+    fn publish(&self, mut event: Event, record: bool) -> Arc<Event> {
         let mut recent = self.inner.recent.lock().expect("event history lock poisoned");
         // The sequence number is taken under the lock so `recent` is always ordered.
-        let event = Arc::new(Event {
-            seq: self.inner.next_seq.fetch_add(1, Ordering::Relaxed),
-            span_id,
-            parent_id,
-            source: source.clone(),
-            at: chrono::Utc::now(),
-            kind,
-        });
+        event.seq = self.inner.next_seq.fetch_add(1, Ordering::Relaxed);
+        let event = Arc::new(event);
         if recent.len() >= self.inner.history_len {
             recent.pop_front();
         }
         recent.push_back(event.clone());
         drop(recent);
 
-        for sink in self.inner.sinks.lock().expect("sink lock poisoned").iter() {
-            sink.record(&event);
+        if record {
+            for sink in self.inner.sinks.lock().expect("sink lock poisoned").iter() {
+                sink.record(&event);
+            }
         }
         // An error only means nobody is listening right now, which is fine.
         let _ = self.inner.sender.send(event.clone());

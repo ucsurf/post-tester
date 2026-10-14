@@ -32,6 +32,8 @@ enum Command {
     Load(commands::request::LoadArgs),
     /// Start the local server and open the app in your browser.
     Serve(commands::serve::ServeArgs),
+    /// Serve saved example responses as a mock API.
+    Mock(commands::serve::MockArgs),
     /// Run as an MCP server over stdio, so AI agents can use post-tester.
     Mcp(commands::serve::McpArgs),
     /// Import cURL, Postman, OpenAPI or plugin formats into the workspace.
@@ -65,6 +67,7 @@ async fn main() -> ExitCode {
         Command::Run(args) => commands::run::run(workspace, args).await,
         Command::Load(args) => commands::request::load(workspace, args).await,
         Command::Serve(args) => commands::serve::serve(workspace, args).await,
+        Command::Mock(args) => commands::serve::mock(workspace, args).await,
         Command::Mcp(args) => commands::serve::mcp(workspace, args).await,
         Command::Import(args) => commands::workspace::import(workspace, args).await,
         Command::Export(args) => commands::workspace::export(workspace, args).await,

@@ -1,0 +1,258 @@
+/* Shared widgets: key/value tables, badges, progress, JSON tree, editors, splitters. */
+
+.kv {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+}
+
+.kv td {
+  padding: 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.kv td + td {
+  border-left: 1px solid var(--border);
+}
+
+.kv-toggle {
+  width: 30px;
+  text-align: center;
+}
+
+.kv-actions {
+  width: 30px;
+  text-align: center;
+}
+
+.kv-input {
+  width: 100%;
+  height: 28px;
+  padding: 0 var(--space-4);
+  border: 0;
+  background: transparent;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+}
+
+.kv-input:focus {
+  outline: none;
+  background: var(--accent-soft);
+  box-shadow: none;
+}
+
+.kv-disabled .kv-input {
+  color: var(--text-faint);
+  text-decoration: line-through;
+}
+
+.source-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+
+.source-badge[data-source="agent"] {
+  color: var(--accent);
+}
+
+.source-badge[data-source="plugin"] {
+  color: var(--accent-2);
+}
+
+.outcome {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  flex-shrink: 0;
+}
+
+.progress {
+  position: relative;
+  display: inline-block;
+  width: 100%;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--bg-active);
+  overflow: hidden;
+}
+
+.progress-fill,
+.progress-failed {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: var(--accent);
+  border-radius: 3px;
+  transition: width 0.2s ease-out;
+}
+
+.progress-failed {
+  background: var(--danger);
+}
+
+.header-table .header-name {
+  width: 32%;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.json-tree {
+  padding: var(--space-4) 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  line-height: 1.6;
+}
+
+.json-line {
+  display: block;
+  width: 100%;
+  padding-right: var(--space-4);
+  white-space: pre-wrap;
+  word-break: break-all;
+  text-align: left;
+}
+
+.json-toggle {
+  border: 0;
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+}
+
+.json-toggle:hover {
+  background: var(--bg-hover);
+}
+
+.json-caret {
+  display: inline-block;
+  width: 14px;
+  color: var(--text-faint);
+}
+
+.json-key {
+  color: var(--accent);
+}
+
+.json-string {
+  color: var(--success);
+}
+
+.json-number,
+.json-bool {
+  color: var(--warning);
+}
+
+.json-null {
+  color: var(--text-faint);
+}
+
+.json-punct {
+  color: var(--text-muted);
+}
+
+.json-summary {
+  margin: 0 var(--space-3);
+  padding: 0 4px;
+  border-radius: 3px;
+  background: var(--bg-active);
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+
+.code-editor {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  min-height: 0;
+}
+
+.code-editor > .cm-editor {
+  flex: 1;
+  min-height: inherit;
+  max-height: inherit;
+}
+
+.code-editor.flush {
+  border: 0;
+  border-radius: 0;
+}
+
+.template-input {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--bg);
+  overflow: hidden;
+}
+
+.template-input:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 20%, transparent);
+}
+
+.template-input .cm-editor {
+  height: auto;
+}
+
+.template-input .cm-content {
+  padding: 5px 0;
+  font-size: var(--text-md);
+}
+
+.template-input .cm-line {
+  padding: 0 var(--space-4);
+}
+
+.template-input .cm-scroller {
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.template-input .cm-editor .cm-content {
+  white-space: pre;
+}
+
+.splitter {
+  position: relative;
+  z-index: 5;
+  flex-shrink: 0;
+  background: var(--border);
+  transition: background 0.12s;
+}
+
+.splitter-vertical {
+  width: 1px;
+  cursor: col-resize;
+}
+
+.splitter-horizontal {
+  height: 1px;
+  cursor: row-resize;
+}
+
+.splitter::after {
+  content: "";
+  position: absolute;
+}
+
+.splitter-vertical::after {
+  inset: 0 -4px;
+}
+
+.splitter-horizontal::after {
+  inset: -4px 0;
+}
+
+.splitter:hover,
+.splitter.dragging,
+.splitter:focus-visible {
+  background: var(--accent);
+  box-shadow: none;
+}

@@ -283,7 +283,8 @@ impl PluginHost {
         if settings.plugins.is_empty() {
             return failures;
         }
-        let span = Span::start(engine.bus(), Source::System, None, SpanKind::System, "Loading plugins", Summary::default());
+        // Only problems are reported in Live Activity; a normal start stays quiet.
+        let mut notes: Vec<(Level, String)> = Vec::new();
         for path in &settings.plugins {
             let dir = workspace.root().join(path);
             let name = dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| path.clone());
@@ -291,27 +292,29 @@ impl PluginHost {
             let granted = settings.approved_permissions.get(&manifest_name).cloned().unwrap_or_default();
             match self.load(&dir, granted).await {
                 Ok(plugin) => {
+                    tracing::debug!(plugin = %plugin.manifest.name, "loaded");
                     let pending = plugin.info().pending_permissions;
-                    span.log(Level::Info, format!("Loaded {} {}", plugin.manifest.name, plugin.manifest.version));
                     if !pending.is_empty() {
-                        span.log(
-                            Level::Warn,
-                            format!("{} is waiting for permission approval: {}", plugin.manifest.name, pending.join(", ")),
-                        );
+                        let text = format!("{} is waiting for permission approval: {}", plugin.manifest.name, pending.join(", "));
+                        notes.push((Level::Warn, text));
                     }
                 }
                 Err(problems) => {
-                    for p in &problems {
-                        span.log(Level::Error, format!("{path}: {p}"));
-                    }
+                    notes.extend(problems.iter().map(|p| (Level::Error, format!("{path}: {p}"))));
                     failures.push((path.clone(), problems));
                 }
             }
         }
-        if failures.is_empty() {
-            span.finish_ok(None, None)
-        } else {
-            span.finish_error(format!("{} plugin(s) failed to load", failures.len()))
+        if !notes.is_empty() {
+            let span = Span::start(engine.bus(), Source::System, None, SpanKind::System, "Loading plugins", Summary::default());
+            for (level, text) in notes {
+                span.log(level, text);
+            }
+            if failures.is_empty() {
+                span.finish_ok(None, None);
+            } else {
+                span.finish_error(format!("{} plugin(s) failed to load", failures.len()));
+            }
         }
         failures
     }

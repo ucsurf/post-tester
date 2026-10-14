@@ -164,6 +164,7 @@ impl State {
                     (Outcome::Error, Some(error)) if !self.error_shown.remove(&id) => {
                         println!("{pad}{} {}", style::red("✗"), style::red(error));
                     }
+                    (Outcome::Failed, Some(reason)) => println!("{pad}{} {}", style::yellow("✗"), style::yellow(reason)),
                     (Outcome::Cancelled, _) => println!("{pad}{}", style::yellow("■ cancelled")),
                     _ if kind == Some(SpanKind::Request) => println!("{pad}  {}", style::dimmed(style::duration(*duration_ms))),
                     _ => {}

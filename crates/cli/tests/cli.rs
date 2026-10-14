@@ -294,7 +294,10 @@ fn mock_serves_examples_and_stops_on_ctrl_c() {
         assert!(stdout.contains("Mock /users/42"), "the hit is shown live: {stdout}");
     }
     #[cfg(not(unix))]
-    child.kill().unwrap();
+    {
+        child.kill().unwrap();
+        child.wait().unwrap();
+    }
 }
 
 #[test]

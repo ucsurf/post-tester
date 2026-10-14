@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState, type KeyboardEvent, type PointerEvent } from "react";
+import { readLocal, writeLocal } from "../lib/storage";
 import "./widgets.css";
 
 type Props = {
@@ -70,21 +71,13 @@ export function Splitter({ orientation, size, onResize, min, max, direction, lab
 /** A number persisted in localStorage (panel sizes). */
 export function usePersistentNumber(key: string, initial: number): [number, (value: number) => void] {
   const [value, setValue] = useState(() => {
-    try {
-      const stored = Number(window.localStorage.getItem(key));
-      return Number.isFinite(stored) && stored > 0 ? stored : initial;
-    } catch {
-      return initial;
-    }
+    const stored = Number(readLocal(key));
+    return Number.isFinite(stored) && stored > 0 ? stored : initial;
   });
   const set = useCallback(
     (next: number) => {
       setValue(next);
-      try {
-        window.localStorage.setItem(key, String(next));
-      } catch {
-        // Sizes then reset on reload; nothing else depends on them.
-      }
+      writeLocal(key, String(next));
     },
     [key],
   );

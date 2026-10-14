@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { readLocal, writeLocal } from "../../lib/storage";
 import { IconButton } from "../../ui/Icon";
 
 export type ThemeChoice = "system" | "light" | "dark";
@@ -7,12 +8,8 @@ const KEY = "post-tester.theme";
 const ORDER: ThemeChoice[] = ["system", "light", "dark"];
 
 export function readTheme(): ThemeChoice {
-  try {
-    const value = window.localStorage.getItem(KEY);
-    return value === "light" || value === "dark" ? value : "system";
-  } catch {
-    return "system";
-  }
+  const value = readLocal(KEY);
+  return value === "light" || value === "dark" ? value : "system";
 }
 
 /** Applies the theme to `<html data-theme>`; "system" follows the OS setting. */
@@ -27,12 +24,7 @@ export function ThemeToggle() {
 
   useEffect(() => {
     applyTheme(theme);
-    try {
-      if (theme === "system") window.localStorage.removeItem(KEY);
-      else window.localStorage.setItem(KEY, theme);
-    } catch {
-      // Not persisted; the theme still applies for this session.
-    }
+    writeLocal(KEY, theme === "system" ? null : theme);
   }, [theme]);
 
   const next = ORDER[(ORDER.indexOf(theme) + 1) % ORDER.length] as ThemeChoice;

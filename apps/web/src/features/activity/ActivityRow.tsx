@@ -1,31 +1,29 @@
-import { memo, type CSSProperties } from "react";
+import { memo } from "react";
 import { formatDuration, formatSize, statusTone } from "../../lib/format";
 import { spanDisplayTitle, spanStatus } from "../../live/selectors";
-import type { SpanState } from "../../live/spans";
 import { useNow } from "../../live/live";
 import { Icon } from "../../ui/Icon";
 import { MethodBadge, OutcomeIcon, ProgressBar, SourceBadge } from "../../ui/widgets";
+import type { RowData } from "./rows";
 import { MiniTiming } from "./Waterfall";
 
-type Props = {
-  span: SpanState;
-  domId: string;
-  depth: number;
-  hasChildren: boolean;
-  expanded: boolean;
-  selected: boolean;
-  active: boolean;
-  isNew: boolean;
-  failedChildren: number;
-  style: CSSProperties;
+type Props = RowData & {
+  /** Offset in the virtual list (px). */
+  top: number;
+  height: number;
+  /** Must be stable (useCallback) so rows stay memoized. */
   onSelect: (id: string) => void;
   onToggle: (id: string) => void;
 };
 
-/** One line of Live Activity: who, what, status, timing, size, outcome. */
+export const activityRowId = (id: string) => `activity-${id}`;
+
+/**
+ * One line of Live Activity: who, what, status, timing, size, outcome. Memoized: all
+ * props are primitives or stable references (see `rowData`).
+ */
 export const ActivityRow = memo(function ActivityRow({
   span,
-  domId,
   depth,
   hasChildren,
   expanded,
@@ -33,7 +31,8 @@ export const ActivityRow = memo(function ActivityRow({
   active,
   isNew,
   failedChildren,
-  style,
+  top,
+  height,
   onSelect,
   onToggle,
 }: Props) {
@@ -45,13 +44,13 @@ export const ActivityRow = memo(function ActivityRow({
 
   return (
     <div
-      id={domId}
-      role="option"
+      id={activityRowId(span.id)}
+      role="treeitem"
       aria-selected={selected}
       aria-expanded={hasChildren ? expanded : undefined}
       aria-level={depth + 1}
       className={`activity-row${running ? " running" : ""}${isNew ? " is-new" : ""}${active ? " active" : ""}`}
-      style={{ ...style, ["--depth" as string]: depth }}
+      style={{ top, height, ["--depth" as string]: depth }}
       onClick={() => onSelect(span.id)}
       title={span.summary.url && span.summary.url !== title ? `${title}\n${span.summary.url}` : title}
     >

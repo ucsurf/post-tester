@@ -23,6 +23,9 @@ export class LiveStore {
   private state: LiveState = emptyLiveState();
   private pending: Event[] = [];
   private scheduled = false;
+  /** Highest seq pushed so far, and the seq up to which `clear()` forgot everything. */
+  private maxSeq = 0;
+  private clearedThrough = 0;
   private readonly listeners = new Set<() => void>();
 
   constructor(
@@ -31,15 +34,30 @@ export class LiveStore {
   ) {}
 
   getState = (): LiveState => this.state;
+  /** Alias so the store fits `useStore` (see state/store.ts). */
+  get = (): LiveState => this.state;
 
   subscribe = (listener: () => void): (() => void) => {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
   };
 
-  push(events: readonly Event[]): void {
+  /**
+   * Queues events for the next flush. `first` marks the history a new connection
+   * starts with; if its numbers are all below what was seen, the server was replaced
+   * (numbering restarted), so an earlier `clear()` must not hide its events.
+   */
+  push(events: readonly Event[], info?: { first: boolean }): void {
     if (events.length === 0) return;
-    for (const event of events) this.pending.push(event);
+    if (info?.first && events.every((e) => e.seq < this.maxSeq)) {
+      this.maxSeq = 0;
+      this.clearedThrough = 0;
+    }
+    for (const event of events) {
+      if (event.seq <= this.clearedThrough) continue;
+      if (event.seq > this.maxSeq) this.maxSeq = event.seq;
+      this.pending.push(event);
+    }
     if (this.scheduled) return;
     this.scheduled = true;
     this.schedule(() => this.flush());
@@ -57,8 +75,12 @@ export class LiveStore {
     this.listeners.forEach((listener) => listener());
   }
 
-  /** Forgets every span (the "Clear" button). New events still arrive. */
+  /**
+   * Forgets every span (the "Clear" button). New events still arrive; events from
+   * before the clear (e.g. history replayed after a reconnect) are ignored.
+   */
   clear(): void {
+    this.clearedThrough = this.maxSeq;
     this.pending = [];
     this.state = emptyLiveState();
     this.listeners.forEach((listener) => listener());

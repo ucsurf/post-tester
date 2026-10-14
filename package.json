@@ -2,6 +2,9 @@
   "name": "post-tester-workspace",
   "private": true,
   "packageManager": "pnpm@11.2.2",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "dev": "pnpm --filter web dev",
     "build": "pnpm --filter web build",

@@ -176,3 +176,36 @@
   color: var(--accent);
   font-weight: 600;
 }
+
+/* Folder settings dialog */
+.folder-settings-section {
+  margin: 0;
+  padding: var(--space-4) var(--space-5) var(--space-5);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  min-width: 0;
+}
+
+.folder-settings-section > legend {
+  padding: 0 var(--space-2);
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+
+.folder-settings-section .form-grid {
+  margin-top: var(--space-4);
+}
+
+/* Keyboard focus sits on the tree item (li); show it on its row. */
+.tree li[role="treeitem"] {
+  outline: none;
+}
+
+.tree li[role="treeitem"]:focus-visible > .tree-row {
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+
+.tree li[role="treeitem"]:focus > .tree-row .tree-action {
+  opacity: 1;
+}

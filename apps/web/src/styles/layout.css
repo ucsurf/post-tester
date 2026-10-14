@@ -121,6 +121,9 @@
   flex: 1;
   min-height: 0;
   overflow: hidden;
+  /* Panels adapt to the room they actually have (the sidebar and Live Activity take
+     part of the window), so they use `@container main` queries, not viewport ones. */
+  container: main / inline-size;
 }
 
 .welcome {

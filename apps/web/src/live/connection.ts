@@ -43,7 +43,8 @@ type SocketLike = Pick<WebSocket, "close"> & {
 
 export type LiveConnectionOptions = {
   url: () => string;
-  onEvents: (events: Event[]) => void;
+  /** `first` is true for the first message on a new socket (the server's history replay). */
+  onEvents: (events: Event[], info: { first: boolean }) => void;
   createSocket?: (url: string) => SocketLike;
 };
 
@@ -99,11 +100,13 @@ export class LiveConnection {
       return;
     }
     this.socket = socket;
+    let first = true;
     socket.onopen = () => this.setStatus({ state: "open", attempts: 0, retryAt: null });
     socket.onmessage = (message) => {
       if (typeof message.data !== "string") return;
       const events = parseEventMessage(message.data);
-      if (events.length > 0) this.options.onEvents(events);
+      if (events.length > 0) this.options.onEvents(events, { first });
+      first = false;
     };
     socket.onerror = () => socket.close();
     socket.onclose = () => {

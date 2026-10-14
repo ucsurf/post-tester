@@ -7,13 +7,16 @@
  * Implements a subset of crates/server/API.md: info, tree, requests, environments,
  * variables, send (performs the real HTTP request and emits a realistic event
  * sequence on /api/live), run, plugins, template functions, codegen, cookies and
- * WebSocket echo sessions. An "AI agent" sends a request every 20 s so the 🤖 path
- * is visible. Everything is in memory.
+ * WebSocket echo sessions, and folder settings. An "AI agent" sends a request every
+ * 20 s so the 🤖 path is visible. Everything is in memory.
+ *
+ *   FLOOD=300 pnpm --filter web mock   # also stream ~300 SSE messages per second,
+ *                                      # to check the UI stays responsive under load
  */
 import { randomBytes } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { WebSocketServer, type WebSocket } from "ws";
-import type { Environment, Event, EventKind, Folder, PluginInfo, Request, Source } from "@post-tester/bindings";
+import type { Environment, Event, EventKind, Folder, FolderSettings, PluginInfo, Request, Source } from "@post-tester/bindings";
 
 const PORT = Number(process.env.PORT ?? 7777);
 const TOKEN = process.env.TOKEN ?? "dev";
@@ -31,6 +34,10 @@ const environments = new Map<string, Environment>([
   ["reqres", { description: "Public demo API", variables: { baseUrl: "https://reqres.in/api" } }],
 ]);
 let defaultEnvironment: string | null = "reqres";
+const folderSettings = new Map<string, FolderSettings>([
+  ["users", { name: "Users", description: "The reqres.in users API", headers: [{ key: "x-api-key", value: "reqres-free-v1" }], variables: {} }],
+]);
+const settingsOf = (id: string): FolderSettings => folderSettings.get(id) ?? { name: id.split("/").pop() ?? "", description: "", headers: [], variables: {} };
 const runtime = new Map<string, string>();
 const history: Event[] = [];
 const blobs = new Map<string, { type: string; body: string }>();
@@ -279,7 +286,7 @@ async function run(ids: string[], environment: string | null | undefined, name: 
 // ── HTTP ─────────────────────────────────────────────────────────────────────
 
 function tree(): Folder {
-  const root: Folder = { id: "", name: "", settings: { name: "", description: "", headers: [], variables: {} }, folders: [], requests: [] };
+  const root: Folder = { id: "", name: "", settings: settingsOf(""), folders: [], requests: [] };
   for (const [id, r] of [...requests].sort(([a], [b]) => a.localeCompare(b))) {
     const parts = id.split("/");
     let folder = root;
@@ -287,7 +294,8 @@ function tree(): Folder {
       const folderId = folder.id ? `${folder.id}/${part}` : part;
       let child = folder.folders.find((f) => f.id === folderId);
       if (!child) {
-        child = { id: folderId, name: part, settings: { name: part, description: "", headers: [], variables: {} }, folders: [], requests: [] };
+        const settings = settingsOf(folderId);
+        child = { id: folderId, name: settings.name || part, settings, folders: [], requests: [] };
         folder.folders.push(child);
       }
       folder = child;
@@ -335,6 +343,11 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (method === "GET") return requests.has(key) ? json(res, 200, requests.get(key)) : fail(res, 404, `No request ${key}. It may have been renamed or deleted.`);
     if (method === "PUT") return requests.set(key, await readJson<Request>(req)), json(res, 204);
     if (method === "DELETE") return requests.delete(key), json(res, 204);
+  }
+  if (path.startsWith("/api/folders/settings/")) {
+    const key = id("/api/folders/settings/");
+    if (method === "GET") return json(res, 200, settingsOf(key));
+    if (method === "PUT") return folderSettings.set(key, await readJson<FolderSettings>(req)), json(res, 204);
   }
   if (path === "/api/environments") return json(res, 200, [...environments.keys()]);
   if (path.startsWith("/api/environments/")) {
@@ -446,7 +459,23 @@ setInterval(() => {
   void send(requests.get("users/get") ?? {}, { requestId: "users/get", environment: "reqres", source: { type: "agent", client: "claude-code" } });
 }, 20_000);
 
+// Optional load: one long-running "SSE" span receiving FLOOD messages per second.
+const flood = Number(process.env.FLOOD ?? 0);
+if (flood > 0) {
+  const stream = new Span({ type: "user" }, null);
+  stream.emit({ type: "started", kind: "request", title: "SSE flood", summary: { protocol: "sse", method: "GET", url: "https://mock.local/events" } });
+  let n = 0;
+  setInterval(() => {
+    for (let i = 0; i < flood / 20; i++) stream.emit({ type: "message", direction: "received", label: "tick", payload: preview(JSON.stringify({ n: ++n, at: Date.now() })) });
+  }, 50);
+}
+
 server.listen(PORT, "127.0.0.1", () => {
+  // What the real server replays after a restart: an operation that was still running
+  // when it stopped, closed as cancelled.
+  const interrupted = new Span({ type: "cli" }, null);
+  interrupted.emit({ type: "started", kind: "request", title: "Long poll", summary: { protocol: "http", method: "GET", url: "https://httpbin.org/delay/60" } });
+  interrupted.emit({ type: "finished", outcome: "cancelled", duration_ms: 0, error: "post-tester stopped before this finished" });
   const boot = new Span({ type: "system" }, null);
   boot.emit({ type: "started", kind: "system", title: "Mock server started", summary: {} });
   boot.emit({ type: "finished", outcome: "ok", duration_ms: 1 });

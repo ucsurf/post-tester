@@ -33,6 +33,25 @@ describe("LiveStore", () => {
     store.clear();
     expect(store.getState().roots).toEqual([]);
   });
+
+  it("does not bring cleared spans back when history is replayed after a reconnect", () => {
+    const store = new LiveStore((flush) => flush());
+    const history = [event(spanId(1), started("a")), event(spanId(1), finished())];
+    store.push(history);
+    store.clear();
+    store.push(history);
+    expect(store.getState().spans.size).toBe(0);
+    store.push([event(spanId(2), started("after the clear"))]);
+    expect(store.getState().roots).toEqual([spanId(2)]);
+  });
+
+  it("shows a restarted server's events after a clear, even though its numbering starts over", () => {
+    const store = new LiveStore((flush) => flush());
+    store.push([event(spanId(1), started("a"), { seq: 500 })]);
+    store.clear();
+    store.push([event(spanId(2), started("new server"), { seq: 1 })], { first: true });
+    expect(store.getState().roots).toEqual([spanId(2)]);
+  });
 });
 
 describe("selectors", () => {
@@ -106,6 +125,26 @@ describe("connection helpers", () => {
     expect(parseEventMessage(JSON.stringify(e))).toEqual([e]);
     expect(parseEventMessage("not json")).toEqual([]);
     expect(parseEventMessage(JSON.stringify([{ hello: 1 }]))).toEqual([]);
+  });
+
+  it("marks the first message on each socket (the history replay)", () => {
+    const sockets: { onopen: ((ev: unknown) => void) | null; onclose: ((ev: unknown) => void) | null; onmessage: ((ev: { data: unknown }) => void) | null }[] = [];
+    const firsts: boolean[] = [];
+    const connection = new LiveConnection({
+      url: () => "ws://x/api/live",
+      onEvents: (_events, info) => firsts.push(info.first),
+      createSocket: () => {
+        const socket = { onopen: null, onclose: null, onerror: null, onmessage: null, close: vi.fn() };
+        sockets.push(socket);
+        return socket;
+      },
+    });
+    connection.start();
+    const data = JSON.stringify([event(spanId(1), started("a"))]);
+    sockets[0]?.onmessage?.({ data });
+    sockets[0]?.onmessage?.({ data });
+    expect(firsts).toEqual([true, false]);
+    connection.stop();
   });
 
   it("reconnects after the socket closes", () => {

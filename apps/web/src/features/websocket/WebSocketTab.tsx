@@ -1,8 +1,7 @@
-import type { KeyValue } from "@post-tester/bindings";
 import { useState } from "react";
 import { api } from "../../api/client";
 import { appStore, selectSpan } from "../../state/app";
-import { Store, useStore } from "../../state/store";
+import { useStore } from "../../state/store";
 import { showError } from "../../state/toasts";
 import { useSpan } from "../../live/live";
 import { Icon } from "../../ui/Icon";
@@ -10,13 +9,8 @@ import { KeyValueEditor } from "../../ui/KeyValueEditor";
 import { TemplateInput } from "../../ui/TemplateInput";
 import { MessageList } from "../activity/MessageList";
 import { RunningTime } from "../activity/ActivityRow";
+import { wsTabs, WS_TAB_INITIAL as initial, type WsTabState } from "./wsTabs";
 import "./websocket.css";
-
-type WsTabState = { url: string; headers: KeyValue[]; sessionId: string | null; message: string };
-
-/** Per-tab state survives switching tabs (the component unmounts when hidden). */
-const wsTabs = new Store<Record<string, WsTabState>>({});
-const initial: WsTabState = { url: "wss://echo.websocket.org", headers: [], sessionId: null, message: "" };
 
 /** A WebSocket client: connect, send messages, and watch traffic live. */
 export function WebSocketTab({ tabKey }: { tabKey: string }) {
@@ -134,21 +128,4 @@ export function WebSocketTab({ tabKey }: { tabKey: string }) {
       </form>
     </div>
   );
-}
-
-export function wsTabTitle(tabKey: string): string {
-  const url = wsTabs.get()[tabKey]?.url ?? initial.url;
-  return url.replace(/^wss?:\/\//, "") || "WebSocket";
-}
-
-export function forgetWsTab(tabKey: string): void {
-  wsTabs.set((s) => {
-    const next = { ...s };
-    delete next[tabKey];
-    return next;
-  });
-}
-
-export function useWsTabs() {
-  return useStore(wsTabs, (s) => s);
 }

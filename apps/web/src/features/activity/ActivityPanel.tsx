@@ -1,33 +1,25 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useCallback, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { plural } from "../../lib/format";
-import { SOURCE_TYPES, type SourceType } from "../../lib/source";
 import { liveConnection, liveStore, useConnectionStatus, useLiveState, useNow } from "../../live/live";
 import {
   EMPTY_FILTER,
-  childCounts,
   filterRoots,
   flattenRows,
   isFilterActive,
   spanProtocol,
   type ActivityFilter,
-  type SpanStatus,
 } from "../../live/selectors";
 import type { LiveState } from "../../live/spans";
 import { appStore, selectSpan } from "../../state/app";
 import { useStore } from "../../state/store";
 import { Icon, IconButton } from "../../ui/Icon";
-import { ActivityRow } from "./ActivityRow";
+import { ActivityFilters as Filters } from "./ActivityFilters";
+import { ActivityRow, activityRowId } from "./ActivityRow";
+import { rowData, type RowContext } from "./rows";
 import "./activity.css";
 
 const ROW_HEIGHT = 30;
-const STATUSES: { id: SpanStatus; label: string }[] = [
-  { id: "running", label: "Running" },
-  { id: "ok", label: "OK" },
-  { id: "failed", label: "Tests failed" },
-  { id: "error", label: "Error" },
-  { id: "cancelled", label: "Cancelled" },
-];
 
 type Props = {
   dock: "right" | "bottom";
@@ -44,7 +36,7 @@ export function ActivityPanel({ dock, onToggleDock, onCollapse }: Props) {
   const [filter, setFilter] = useState<ActivityFilter>(EMPTY_FILTER);
   const [showFilters, setShowFilters] = useState(false);
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
-  const [activeIndex, setActiveIndex] = useState(0);
+  const [activeId, setActiveId] = useState<string | null>(null);
   const selected = useStore(appStore, (s) => s.selectedSpan);
   const listRef = useRef<HTMLDivElement>(null);
   // Rows for operations that start after the panel mounted get a short highlight.
@@ -52,7 +44,11 @@ export function ActivityPanel({ dock, onToggleDock, onCollapse }: Props) {
 
   const roots = useMemo(() => filterRoots(view, filter), [view, filter]);
   const rows = useMemo(() => flattenRows(view, roots, expanded), [view, roots, expanded]);
-  const protocols = useMemo(() => [...new Set(view.roots.map((id) => view.spans.get(id)).filter((s) => s !== undefined).map(spanProtocol))].sort(), [view]);
+  // Only needed (and only recomputed per batch) while the filter bar is open.
+  const protocols = useMemo(
+    () => (showFilters ? [...new Set(view.roots.map((id) => view.spans.get(id)).filter((s) => s !== undefined).map(spanProtocol))].sort() : []),
+    [view, showFilters],
+  );
 
   const virtualizer = useVirtualizer({
     count: rows.length,
@@ -98,38 +94,52 @@ export function ActivityPanel({ dock, onToggleDock, onCollapse }: Props) {
     });
   }, []);
 
-  const onSelect = useCallback(
-    (id: string) => {
-      selectSpan(id);
-      const index = rows.findIndex((r) => r.id === id);
-      if (index >= 0) setActiveIndex(index);
-    },
-    [rows],
-  );
+  // Stable, so memoized rows do not re-render when the list changes.
+  const onSelect = useCallback((id: string) => {
+    selectSpan(id);
+    setActiveId(id);
+  }, []);
+
+  // The keyboard cursor follows its operation as new rows arrive above it.
+  const foundIndex = activeId === null ? -1 : rows.findIndex((r) => r.id === activeId);
+  const activeIndex = foundIndex === -1 ? 0 : foundIndex;
+  const activeRow = rows[activeIndex];
 
   const onKeyDown = (e: KeyboardEvent) => {
-    const row = rows[activeIndex];
+    const row = activeRow;
     let next = activeIndex;
     if (e.key === "ArrowDown") next = Math.min(rows.length - 1, activeIndex + 1);
     else if (e.key === "ArrowUp") next = Math.max(0, activeIndex - 1);
     else if (e.key === "Home") next = 0;
     else if (e.key === "End") next = rows.length - 1;
-    else if (e.key === "Enter" && row) return selectSpan(row.id);
-    else if (e.key === "ArrowRight" && row?.hasChildren && !expanded.has(row.id)) return toggleExpanded(row.id);
+    else if (e.key === "PageDown") next = Math.min(rows.length - 1, activeIndex + pageSize());
+    else if (e.key === "PageUp") next = Math.max(0, activeIndex - pageSize());
+    else if ((e.key === "Enter" || e.key === " ") && row) {
+      e.preventDefault();
+      return onSelect(row.id);
+    } else if (e.key === "ArrowRight" && row?.hasChildren && !expanded.has(row.id)) {
+      e.preventDefault();
+      return toggleExpanded(row.id);
+    } else if (e.key === "ArrowRight" && row?.hasChildren) next = Math.min(rows.length - 1, activeIndex + 1);
     else if (e.key === "ArrowLeft" && row && expanded.has(row.id)) return toggleExpanded(row.id);
-    else return;
+    else if (e.key === "ArrowLeft" && row && row.depth > 0) {
+      // Jump to the parent row.
+      const parent = view.spans.get(row.id)?.parentId;
+      const index = parent ? rows.findIndex((r) => r.id === parent) : -1;
+      if (index === -1) return;
+      next = index;
+    } else return;
     e.preventDefault();
-    setActiveIndex(next);
+    setActiveId(rows[next]?.id ?? null);
     virtualizer.scrollToIndex(next, { align: "auto" });
   };
+  const pageSize = () => Math.max(1, Math.floor((listRef.current?.clientHeight ?? ROW_HEIGHT * 10) / ROW_HEIGHT) - 1);
 
   const newWhilePaused = frozen ? countNew(frozen, live) : 0;
   const filtered = isFilterActive(filter);
   const activeFilterCount = filter.sources.size + filter.protocols.size + filter.statuses.size + (filter.text.trim() ? 1 : 0);
   const items = virtualizer.getVirtualItems();
-  const activeRow = rows[Math.min(activeIndex, rows.length - 1)];
-
-  const now = Date.now();
+  const rowContext: RowContext = { expanded, selected, activeId: activeRow?.id ?? null, mountedAt: mountedAt.current, now: Date.now() };
   return (
     <section className="activity" aria-label="Live Activity">
       <header className="activity-header">
@@ -177,47 +187,24 @@ export function ActivityPanel({ dock, onToggleDock, onCollapse }: Props) {
           className="activity-list"
           ref={listRef}
           onScroll={onScroll}
-          role="listbox"
+          role="tree"
           aria-label="Operations, newest first"
           tabIndex={0}
-          aria-activedescendant={activeRow ? `activity-${activeRow.id}` : undefined}
+          aria-activedescendant={activeRow ? activityRowId(activeRow.id) : undefined}
           onKeyDown={onKeyDown}
         >
           <div style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
             {items.map((item) => {
               const row = rows[item.index];
-              const span = row ? view.spans.get(row.id) : undefined;
-              if (!row || !span) return null;
-              return (
-                <ActivityRow
-                  key={row.id}
-                  domId={`activity-${row.id}`}
-                  span={span}
-                  depth={row.depth}
-                  hasChildren={row.hasChildren}
-                  expanded={expanded.has(row.id)}
-                  selected={selected === row.id}
-                  active={item.index === activeIndex}
-                  isNew={span.startedAt > mountedAt.current && now - span.startedAt < 1500}
-                  failedChildren={span.kind === "collection_run" ? failedCount(view, row.id) : 0}
-                  style={{ top: item.start, height: ROW_HEIGHT }}
-                  onSelect={onSelect}
-                  onToggle={toggleExpanded}
-                />
-              );
+              const data = row ? rowData(view, row, rowContext) : null;
+              if (!row || !data) return null;
+              return <ActivityRow key={row.id} {...data} top={item.start} height={ROW_HEIGHT} onSelect={onSelect} onToggle={toggleExpanded} />;
             })}
           </div>
         </div>
       )}
     </section>
   );
-}
-
-function failedCount(state: LiveState, id: string): number {
-  const span = state.spans.get(id);
-  if (!span) return 0;
-  const counts = childCounts(state, span);
-  return counts.failed + counts.error;
 }
 
 function countNew(frozen: LiveState, live: LiveState): number {
@@ -252,68 +239,6 @@ function ConnectionBanner() {
       <button type="button" className="btn btn-sm" onClick={() => liveConnection.retryNow()}>
         Retry now
       </button>
-    </div>
-  );
-}
-
-function Filters({
-  filter,
-  onChange,
-  protocols,
-  activeCount,
-}: {
-  filter: ActivityFilter;
-  onChange: (f: ActivityFilter) => void;
-  protocols: string[];
-  activeCount: number;
-}) {
-  const toggle = <T,>(set: ReadonlySet<T>, value: T): Set<T> => {
-    const next = new Set(set);
-    if (next.has(value)) next.delete(value);
-    else next.add(value);
-    return next;
-  };
-  return (
-    <div className="activity-filters" role="group" aria-label="Filters">
-      <input
-        className="input grow"
-        type="search"
-        placeholder="Search title, URL, status…"
-        aria-label="Search activity"
-        value={filter.text}
-        onChange={(e) => onChange({ ...filter, text: e.target.value })}
-      />
-      {activeCount > 0 && (
-        <button type="button" className="btn btn-ghost btn-sm" onClick={() => onChange(EMPTY_FILTER)}>
-          Reset
-        </button>
-      )}
-      <div className="row" style={{ flexWrap: "wrap", gap: 4, width: "100%" }}>
-        {SOURCE_TYPES.map((s) => (
-          <button
-            key={s.type}
-            type="button"
-            className="chip"
-            aria-pressed={filter.sources.has(s.type)}
-            onClick={() => onChange({ ...filter, sources: toggle<SourceType>(filter.sources, s.type) })}
-          >
-            <span aria-hidden="true">{s.icon}</span>
-            {s.label}
-          </button>
-        ))}
-      </div>
-      <div className="row" style={{ flexWrap: "wrap", gap: 4, width: "100%" }}>
-        {STATUSES.map((s) => (
-          <button key={s.id} type="button" className="chip" aria-pressed={filter.statuses.has(s.id)} onClick={() => onChange({ ...filter, statuses: toggle(filter.statuses, s.id) })}>
-            {s.label}
-          </button>
-        ))}
-        {protocols.map((p) => (
-          <button key={p} type="button" className="chip mono" aria-pressed={filter.protocols.has(p)} onClick={() => onChange({ ...filter, protocols: toggle(filter.protocols, p) })}>
-            {p}
-          </button>
-        ))}
-      </div>
     </div>
   );
 }

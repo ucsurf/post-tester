@@ -76,6 +76,11 @@ export type LiveState = {
   roots: readonly SpanId[];
   /** Increases on every change; handy as a cheap dependency. */
   version: number;
+  /**
+   * Ids of spans evicted to save memory. Their events are ignored from then on, so a
+   * history replay after a reconnect does not bring them back as half-empty spans.
+   */
+  dropped: ReadonlySet<SpanId>;
 };
 
 export type LiveOptions = {
@@ -88,7 +93,7 @@ export type LiveOptions = {
 export const DEFAULT_LIVE_OPTIONS: LiveOptions = { maxSpans: 5000, maxEntriesPerSpan: 2000 };
 
 export function emptyLiveState(): LiveState {
-  return { spans: new Map(), roots: [], version: 0 };
+  return { spans: new Map(), roots: [], version: 0, dropped: new Set() };
 }
 
 const PLACEHOLDER_SOURCE: Source = { type: "system" };
@@ -139,6 +144,9 @@ function cloneSpan(span: SpanState): SpanState {
   };
 }
 
+/** The error the server records for operations that were running when it stopped. */
+export const STOPPED_BEFORE_FINISHING = "post-tester stopped before this finished";
+
 /** Whether `event` was already applied to `span` (e.g. replayed history). */
 function isDuplicate(span: SpanState | undefined, event: Event): boolean {
   if (!span || event.seq > span.lastSeq) return false;
@@ -168,7 +176,9 @@ export function applyEvents(state: LiveState, incoming: readonly Event[], option
   };
 
   let changed = false;
+  const dropped = state.dropped;
   for (const event of events) {
+    if (dropped.size > 0 && (dropped.has(event.span_id) || (event.parent_id !== undefined && dropped.has(event.parent_id)))) continue;
     if (isDuplicate(spans.get(event.span_id), event)) continue;
     changed = true;
     const span = draft(event.span_id);
@@ -180,18 +190,28 @@ export function applyEvents(state: LiveState, incoming: readonly Event[], option
       insertSorted(parent.children, span.id, ascending);
     }
 
-    applyEvent(span, event, options);
+    applyEvent(span, event);
   }
   if (!changed) return state;
 
-  const result: LiveState = { spans, roots: roots ?? state.roots, version: state.version + 1 };
+  // Entries are appended uncapped while applying (cheap pushes); trim once per span here.
+  for (const id of drafts) {
+    const span = spans.get(id);
+    if (span) trimEntries(span, options.maxEntriesPerSpan);
+  }
+  const result: LiveState = { spans, roots: roots ?? state.roots, version: state.version + 1, dropped };
   return evict(result, options.maxSpans);
 }
 
-function applyEvent(span: SpanState, event: Event, options: LiveOptions): void {
+function trimEntries(span: SpanState, cap: number): void {
+  for (const list of [span.events, span.messages, span.logs, span.tests, span.variables] as { seq: number }[][]) {
+    if (list.length > cap) list.splice(0, list.length - cap);
+  }
+}
+
+function applyEvent(span: SpanState, event: Event): void {
   const at = Date.parse(event.at);
   const time = Number.isFinite(at) ? at : 0;
-  const cap = options.maxEntriesPerSpan;
 
   if (!span.started) {
     span.source = event.source;
@@ -200,7 +220,7 @@ function applyEvent(span: SpanState, event: Event, options: LiveOptions): void {
   span.updatedAt = Math.max(span.updatedAt, time);
   span.eventCount++;
   span.lastSeq = Math.max(span.lastSeq, event.seq);
-  insertCapped(span.events, event, cap);
+  insertBySeq(span.events, event);
 
   const kind = event.kind;
   switch (kind.type) {
@@ -232,24 +252,25 @@ function applyEvent(span: SpanState, event: Event, options: LiveOptions): void {
       span.status = kind.status;
       break;
     case "message":
-      insertCapped(span.messages, { seq: event.seq, at: time, direction: kind.direction, label: kind.label ?? null, payload: kind.payload }, cap);
+      insertBySeq(span.messages, { seq: event.seq, at: time, direction: kind.direction, label: kind.label ?? null, payload: kind.payload });
       break;
     case "log":
-      insertCapped(span.logs, { seq: event.seq, at: time, level: kind.level, text: kind.text }, cap);
+      insertBySeq(span.logs, { seq: event.seq, at: time, level: kind.level, text: kind.text });
       break;
     case "test_result":
-      insertCapped(span.tests, { seq: event.seq, name: kind.name, passed: kind.passed, detail: kind.detail ?? null }, cap);
+      insertBySeq(span.tests, { seq: event.seq, name: kind.name, passed: kind.passed, detail: kind.detail ?? null });
       break;
     case "progress":
       span.progress = { done: kind.done, total: kind.total };
       break;
     case "variable_set":
-      insertCapped(span.variables, { seq: event.seq, at: time, name: kind.name, value: kind.value }, cap);
+      insertBySeq(span.variables, { seq: event.seq, at: time, name: kind.name, value: kind.value });
       break;
     case "finished":
       span.outcome = kind.outcome;
-      span.durationMs = kind.duration_ms;
       span.finishedAt = time;
+      // Closed by the server after a restart: the real duration is unknown (it reports 0).
+      span.durationMs = kind.outcome === "cancelled" && kind.error === STOPPED_BEFORE_FINISHING ? null : kind.duration_ms;
       if (kind.status !== undefined) span.status = kind.status;
       if (kind.size !== undefined) span.size = kind.size;
       span.error = kind.error ?? null;
@@ -260,27 +281,45 @@ function applyEvent(span: SpanState, event: Event, options: LiveOptions): void {
 /** Drops the oldest finished top-level spans (with their descendants) beyond `maxSpans`. */
 function evict(state: LiveState, maxSpans: number): LiveState {
   if (state.spans.size <= maxSpans) return state;
-  const spans = new Map(state.spans);
+  // `state.spans` is the fresh map built by this batch, so it can be changed in place.
+  const spans = state.spans as Map<SpanId, SpanState>;
   const roots = state.roots.slice();
+  const removed: SpanId[] = [];
+  let kept = roots.length;
   for (let i = roots.length - 1; i >= 0 && spans.size > maxSpans; i--) {
     const id = roots[i] as SpanId;
     if (!isTreeFinished(spans, id)) continue;
-    removeTree(spans, id);
-    roots.splice(i, 1);
+    removeTree(spans, id, removed);
+    roots[i] = "";
+    kept--;
   }
-  return { ...state, spans, roots };
+  if (removed.length === 0) return state;
+  return { ...state, spans, roots: kept === roots.length ? roots : roots.filter((id) => id !== ""), dropped: remember(state.dropped, removed, maxSpans * 4) };
 }
 
+/** Adds ids to the dropped set, keeping only the newest `limit`. */
+function remember(dropped: ReadonlySet<SpanId>, ids: readonly SpanId[], limit: number): ReadonlySet<SpanId> {
+  const next = new Set(dropped);
+  ids.forEach((id) => next.add(id));
+  return next.size > limit ? new Set([...next].slice(next.size - limit)) : next;
+}
+
+/**
+ * Finished, including all descendants. A placeholder (a parent whose own events were
+ * never seen, e.g. older than the history) counts as finished once its children are.
+ */
 function isTreeFinished(spans: ReadonlyMap<SpanId, SpanState>, id: SpanId): boolean {
   const span = spans.get(id);
   if (!span) return true;
-  return span.outcome !== null && span.children.every((child) => isTreeFinished(spans, child));
+  const finished = span.outcome !== null || (!span.started && span.eventCount === 0 && span.children.length > 0);
+  return finished && span.children.every((child) => isTreeFinished(spans, child));
 }
 
-function removeTree(spans: Map<SpanId, SpanState>, id: SpanId): void {
+function removeTree(spans: Map<SpanId, SpanState>, id: SpanId, removed: SpanId[]): void {
   const span = spans.get(id);
   spans.delete(id);
-  span?.children.forEach((child) => removeTree(spans, child));
+  removed.push(id);
+  span?.children.forEach((child) => removeTree(spans, child, removed));
 }
 
 // ── Sorted-array helpers ─────────────────────────────────────────────────────
@@ -320,10 +359,9 @@ function indexBySeq(list: readonly { seq: number }[], seq: number): { index: num
   return { index: lo, found: false };
 }
 
-/** Inserts by `seq` (usually an append) and keeps only the newest `cap` entries. */
-function insertCapped<T extends { seq: number }>(list: T[], entry: T, cap: number): void {
+/** Inserts by `seq` (usually an append). Capping happens once per batch, in `trimEntries`. */
+function insertBySeq<T extends { seq: number }>(list: T[], entry: T): void {
   const last = list[list.length - 1];
   if (!last || last.seq < entry.seq) list.push(entry);
   else list.splice(indexBySeq(list, entry.seq).index, 0, entry);
-  if (list.length > cap) list.splice(0, list.length - cap);
 }

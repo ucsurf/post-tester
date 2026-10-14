@@ -3,13 +3,14 @@ import { api } from "../api/client";
 import { errorText } from "../api/http";
 import type { ExecutionView, Info, TemplateFunction, Variable } from "../api/types";
 import { idBaseName, newRequest, normalizeRequest, requestsEqual } from "../features/request-editor/model";
+import { readLocal, writeLocal } from "../lib/storage";
 import { confirmDialog, promptDialog, validateRequestId } from "./dialogs";
 import { Store } from "./store";
 import { showError, showToast } from "./toasts";
 
 /** Workspace data, open tabs and request drafts. Actions below are the only writers. */
 
-export type PanelKind = "environments" | "plugins" | "agent" | "mcp" | "settings";
+export type PanelKind = "environments" | "plugins" | "agent" | "mcp";
 
 export type Tab = { key: string; kind: "request" } | { key: string; kind: "websocket" } | { key: string; kind: PanelKind };
 
@@ -35,7 +36,8 @@ export type RequestDoc = {
 export type Dialog =
   | { type: "import"; into?: string }
   | { type: "runner"; folder: string | null; requests: string[] }
-  | { type: "load-test"; requestKey: string };
+  | { type: "load-test"; requestKey: string }
+  | { type: "folder-settings"; folder: string };
 
 export type AppState = {
   info: Info | null;
@@ -362,21 +364,4 @@ function suggestId(request: Request): string {
     .replace(/[^a-z0-9/]+/g, "-")
     .replace(/^[-/]+|[-/]+$/g, "")
     .replace(/\/+/g, "/");
-}
-
-function readLocal(key: string): string | null {
-  try {
-    return window.localStorage.getItem(key);
-  } catch {
-    return null;
-  }
-}
-
-function writeLocal(key: string, value: string | null): void {
-  try {
-    if (value === null) window.localStorage.removeItem(key);
-    else window.localStorage.setItem(key, value);
-  } catch {
-    // Storage can be unavailable (private mode); the choice then lasts for this session only.
-  }
 }

@@ -1,15 +1,18 @@
-import { useRef, type KeyboardEvent, type MouseEvent } from "react";
-import { EnvironmentsPanel } from "./features/environments/EnvironmentsPanel";
-import { ConnectAgentPanel } from "./features/mcp/ConnectAgentPanel";
-import { McpClientPanel } from "./features/mcp/McpClientPanel";
-import { PluginsPanel } from "./features/plugins/PluginsPanel";
-import { RequestEditor } from "./features/request-editor/RequestEditor";
-import { modKey } from "./features/response/ResponsePanel";
-import { forgetWsTab, useWsTabs, WebSocketTab, wsTabTitle } from "./features/websocket/WebSocketTab";
-import { activateTab, appStore, closeTab, isDirty, newRequestTab, openDialog, openPanel, tabTitle, type AppState, type Tab } from "./state/app";
+import { lazy, Suspense, useRef, type KeyboardEvent, type MouseEvent } from "react";
+import { forgetWsTab, useWsTabs, wsTabTitle } from "./features/websocket/wsTabs";
+import { modKey } from "./lib/platform";
+import { activateTab, appStore, closeTab, isDirty, newRequestTab, openDialog, openPanel, tabTitle, type AppState, type PanelKind, type Tab } from "./state/app";
 import { shallowEqualArrays, useStore } from "./state/store";
 import { Icon, IconButton, type IconName } from "./ui/Icon";
-import { MethodBadge } from "./ui/widgets";
+import { MethodBadge, Spinner } from "./ui/widgets";
+
+// Everything behind a tab loads on demand; the first screen needs none of it.
+const RequestEditor = lazy(() => import("./features/request-editor/RequestEditor").then((m) => ({ default: m.RequestEditor })));
+const WebSocketTab = lazy(() => import("./features/websocket/WebSocketTab").then((m) => ({ default: m.WebSocketTab })));
+const EnvironmentsPanel = lazy(() => import("./features/environments/EnvironmentsPanel").then((m) => ({ default: m.EnvironmentsPanel })));
+const PluginsPanel = lazy(() => import("./features/plugins/PluginsPanel").then((m) => ({ default: m.PluginsPanel })));
+const McpClientPanel = lazy(() => import("./features/mcp/McpClientPanel").then((m) => ({ default: m.McpClientPanel })));
+const ConnectAgentPanel = lazy(() => import("./features/mcp/ConnectAgentPanel").then((m) => ({ default: m.ConnectAgentPanel })));
 
 /** The tab bar and the content of the active tab. */
 export function MainArea() {
@@ -20,8 +23,24 @@ export function MainArea() {
   return (
     <>
       <TabBar tabs={tabs} active={active} />
-      <div className="tab-content">{tab ? <TabContent tab={tab} /> : <Welcome />}</div>
+      <div className="tab-content">
+        {tab ? (
+          <Suspense fallback={<TabLoading />}>
+            <TabContent tab={tab} />
+          </Suspense>
+        ) : (
+          <Welcome />
+        )}
+      </div>
     </>
+  );
+}
+
+function TabLoading() {
+  return (
+    <div className="empty">
+      <Spinner label="Loading…" />
+    </div>
   );
 }
 
@@ -39,17 +58,14 @@ function TabContent({ tab }: { tab: Tab }) {
       return <McpClientPanel />;
     case "agent":
       return <ConnectAgentPanel />;
-    case "settings":
-      return null;
   }
 }
 
-const PANEL_TITLES: Record<string, { title: string; icon: IconName }> = {
+const PANEL_TITLES: Record<PanelKind, { title: string; icon: IconName }> = {
   environments: { title: "Environments", icon: "layers" },
   plugins: { title: "Plugins", icon: "plug" },
   mcp: { title: "MCP client", icon: "terminal" },
   agent: { title: "Connect AI agent", icon: "bot" },
-  settings: { title: "Settings", icon: "settings" },
 };
 
 type TabLabel = { key: string; title: string; method: string | null; icon: IconName | null; dirty: boolean; sending: boolean };
@@ -68,7 +84,7 @@ function labelsOf(state: AppState): TabLabel[] {
       };
     }
     if (tab.kind === "websocket") return { key: tab.key, title: "WebSocket", method: "WS", icon: null, dirty: false, sending: false };
-    const meta = PANEL_TITLES[tab.kind] ?? { title: tab.kind, icon: "settings" as IconName };
+    const meta = PANEL_TITLES[tab.kind];
     return { key: tab.key, title: meta.title, method: null, icon: meta.icon, dirty: false, sending: false };
   });
 }

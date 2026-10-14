@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { applyEvents, emptyLiveState, type LiveState } from "./spans";
+import { applyEvents, emptyLiveState, STOPPED_BEFORE_FINISHING, type LiveState } from "./spans";
 import { event, finished, resetSeq, spanId, started } from "./testing";
 
 const A = spanId(1);
@@ -207,5 +207,60 @@ describe("applyEvents: limits", () => {
     );
     expect([...state.spans.keys()].sort()).toEqual([spanId(1), spanId(4), spanId(5)]);
     expect(state.roots).toEqual([spanId(5), spanId(4), spanId(1)]);
+  });
+});
+
+describe("applyEvents: eviction and replays", () => {
+  const options = { maxSpans: 2, maxEntriesPerSpan: 100 };
+
+  it("ignores replayed events of evicted spans instead of resurrecting them", () => {
+    const history = [
+      event(spanId(1), started("old")),
+      event(spanId(1), finished()),
+      event(spanId(2), started("middle")),
+      event(spanId(2), finished()),
+      event(spanId(3), started("new")),
+      event(spanId(3), finished()),
+    ];
+    const state = applyEvents(emptyLiveState(), history, options);
+    expect([...state.spans.keys()].sort()).toEqual([spanId(2), spanId(3)]);
+    expect(state.dropped.has(spanId(1))).toBe(true);
+    const replayed = applyEvents(state, history, options);
+    expect(replayed).toBe(state);
+  });
+
+  it("evicts a placeholder parent (never seen) once its children are finished", () => {
+    const state = applyEvents(
+      emptyLiveState(),
+      [
+        event(spanId(2), started("orphan"), { parent: spanId(1) }),
+        event(spanId(2), finished(), { parent: spanId(1) }),
+        event(spanId(5), started("a")),
+        event(spanId(5), finished()),
+        event(spanId(6), started("b")),
+      ],
+      options,
+    );
+    expect(state.spans.has(spanId(1))).toBe(false);
+    expect(state.roots).toEqual([spanId(6), spanId(5)]);
+  });
+});
+
+describe("applyEvents: operations interrupted by a restart", () => {
+  it("shows spans the server closed after a restart as cancelled, with an unknown duration", () => {
+    const state = applyEvents(emptyLiveState(), [
+      event(A, started("Run", "collection_run")),
+      event(B, started("slow"), { parent: A }),
+      event(B, { type: "finished", outcome: "cancelled", duration_ms: 0, error: STOPPED_BEFORE_FINISHING }, { parent: A }),
+      event(A, { type: "finished", outcome: "cancelled", duration_ms: 0, error: STOPPED_BEFORE_FINISHING }),
+    ]);
+    for (const id of [A, B]) {
+      expect(span(state, id)).toMatchObject({ outcome: "cancelled", durationMs: null, error: STOPPED_BEFORE_FINISHING });
+    }
+  });
+
+  it("keeps the duration of a normal cancellation", () => {
+    const state = applyEvents(emptyLiveState(), [event(A, started("x")), event(A, { type: "finished", outcome: "cancelled", duration_ms: 812 })]);
+    expect(span(state, A).durationMs).toBe(812);
   });
 });

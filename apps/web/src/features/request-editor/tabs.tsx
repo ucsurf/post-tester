@@ -1,12 +1,11 @@
-import type { Auth, FieldInfo, Request } from "@post-tester/bindings";
+import type { Auth, Request } from "@post-tester/bindings";
 import { useMemo } from "react";
 import { prettyJson, parseJson } from "../../lib/text";
-import { appStore } from "../../state/app";
-import { useStore } from "../../state/store";
 import { CodeEditor } from "../../ui/CodeEditor";
 import { KeyValueEditor, recordToRows, rowsToRecord } from "../../ui/KeyValueEditor";
 import { HelpPopover } from "../../ui/Menu";
-import { authChoice, authForChoice, convertBody, type AuthChoice, type BodyType } from "./model";
+import { AuthEditor } from "./AuthEditor";
+import { convertBody, type BodyType } from "./model";
 
 /** The tabs of the request editor. Each receives the draft and an `update` function. */
 
@@ -166,116 +165,16 @@ function withOperation(body: Extract<Request["body"], { type: "graphql" }>, name
 }
 
 export function AuthTab({ request, update }: TabProps) {
-  const plugins = useStore(appStore, (s) => s.plugins);
-  const pluginMethods = plugins.flatMap((p) => p.capabilities.auth.map((a) => ({ id: `${p.name}/${a.name}`, label: a.displayName, plugin: p.displayName, fields: a.fields })));
-  const auth = request.auth;
-  const choice = authChoice(auth);
   const setAuth = (next: Auth | undefined) =>
     update((r) => {
       const { auth: _old, ...rest } = r;
       return next ? { ...rest, auth: next } : rest;
     });
-  const pluginMethod = auth?.type === "plugin" ? pluginMethods.find((m) => m.id === auth.name) : undefined;
-
   return (
     <div className="tab-pad stack auth-tab">
-      <label className="field" style={{ maxWidth: 360 }}>
-        <span>Type</span>
-        <select className="select" value={choice} onChange={(e) => setAuth(authForChoice(e.target.value as AuthChoice, auth))}>
-          <option value="inherit">Inherit from folder</option>
-          <option value="none">No auth</option>
-          <option value="basic">Basic</option>
-          <option value="bearer">Bearer token</option>
-          <option value="api_key">API key</option>
-          {pluginMethods.length > 0 && (
-            <optgroup label="From plugins">
-              {pluginMethods.map((m) => (
-                <option key={m.id} value={`plugin:${m.id}`}>
-                  {m.label} ({m.plugin})
-                </option>
-              ))}
-            </optgroup>
-          )}
-          {auth?.type === "plugin" && !pluginMethod && <option value={choice}>{auth.name} (plugin not installed)</option>}
-        </select>
-      </label>
-      {!auth && <p className="hint">Uses the auth of the folder (set in its _folder.yaml), if any.</p>}
-      {auth?.type === "none" && <p className="hint">No credentials are sent, even if the folder defines auth.</p>}
-      {auth?.type === "basic" && (
-        <div className="form-grid">
-          <TextField label="Username" value={auth.username} onChange={(username) => setAuth({ ...auth, username })} />
-          <TextField label="Password" value={auth.password} secret onChange={(password) => setAuth({ ...auth, password })} />
-        </div>
-      )}
-      {auth?.type === "bearer" && (
-        <div className="form-grid">
-          <TextField label="Token" value={auth.token} secret onChange={(token) => setAuth({ ...auth, token })} placeholder="{{token}} or {{secret:apiToken}}" />
-        </div>
-      )}
-      {auth?.type === "api_key" && (
-        <div className="form-grid">
-          <TextField label="Name" value={auth.key} onChange={(key) => setAuth({ ...auth, key })} />
-          <TextField label="Value" value={auth.value} secret onChange={(value) => setAuth({ ...auth, value })} />
-          <label className="field">
-            <span>Add to</span>
-            <select className="select" value={auth.location} onChange={(e) => setAuth({ ...auth, location: e.target.value === "query" ? "query" : "header" })}>
-              <option value="header">Header</option>
-              <option value="query">Query parameter</option>
-            </select>
-          </label>
-        </div>
-      )}
-      {auth?.type === "plugin" && (
-        <div className="form-grid">
-          {pluginMethod ? (
-            pluginMethod.fields.map((field) => (
-              <PluginField key={field.name} field={field} value={auth.config[field.name]} onChange={(v) => setAuth({ ...auth, config: { ...auth.config, [field.name]: v } })} />
-            ))
-          ) : (
-            <p className="callout warning">The plugin providing “{auth.name}” is not installed or failed to load. See the Plugins panel.</p>
-          )}
-        </div>
-      )}
-      {auth && auth.type !== "none" && <p className="hint">Tip: keep credentials out of files with {"{{secret:name}}"} (stored in your OS keychain, see Environments → Secrets).</p>}
+      <AuthEditor auth={request.auth} onChange={setAuth} inheritLabel="Inherit from folder" inheritHint="Uses the auth of the folder (set in its folder settings), if any." />
     </div>
   );
-}
-
-function TextField({ label, value, onChange, secret, placeholder }: { label: string; value: string; onChange: (v: string) => void; secret?: boolean; placeholder?: string }) {
-  return (
-    <label className="field">
-      <span>{label}</span>
-      <input
-        className="input input-mono"
-        type={secret && !value.includes("{{") ? "password" : "text"}
-        value={value}
-        placeholder={placeholder}
-        onChange={(e) => onChange(e.target.value)}
-        autoComplete="off"
-      />
-    </label>
-  );
-}
-
-function PluginField({ field, value, onChange }: { field: FieldInfo; value: unknown; onChange: (v: unknown) => void }) {
-  const type = field.type.toLowerCase();
-  if (type === "boolean") {
-    return (
-      <label className="checkbox">
-        <input type="checkbox" checked={value === true} onChange={(e) => onChange(e.target.checked)} />
-        {field.label}
-      </label>
-    );
-  }
-  if (type === "number") {
-    return (
-      <label className="field">
-        <span>{field.label}</span>
-        <input className="input" type="number" value={typeof value === "number" ? value : ""} onChange={(e) => onChange(e.target.value === "" ? null : Number(e.target.value))} />
-      </label>
-    );
-  }
-  return <TextField label={field.label} value={typeof value === "string" ? value : value === undefined || value === null ? "" : String(value)} secret={type === "secret" || type === "password"} onChange={onChange} />;
 }
 
 export function ScriptsTab({ request, update }: TabProps) {

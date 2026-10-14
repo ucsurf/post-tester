@@ -163,7 +163,8 @@ p {
 .btn-danger.btn-solid {
   background: var(--danger);
   border-color: var(--danger);
-  color: #fff;
+  /* White on the light-theme red, near-black on the brighter dark-theme red (AA in both). */
+  color: var(--bg);
 }
 
 .btn-ghost {

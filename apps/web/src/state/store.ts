@@ -20,8 +20,11 @@ export class Store<T> {
   };
 }
 
+/** Anything with a current value and change notifications (`Store`, `LiveStore`). */
+export type Readable<T> = { get: () => T; subscribe: (listener: () => void) => () => void };
+
 /** Re-renders only when the selected value changes (compared with `Object.is`, or `equal`). */
-export function useStore<T, S>(store: Store<T>, selector: (state: T) => S, equal: (a: S, b: S) => boolean = Object.is): S {
+export function useStore<T, S>(store: Readable<T>, selector: (state: T) => S, equal: (a: S, b: S) => boolean = Object.is): S {
   const last = useRef<{ state: T; selector: (state: T) => S; value: S } | null>(null);
   // Selectors are usually inline closures, so a new one is re-run once; `equal` keeps
   // the previous value (and its identity) when the result did not change.

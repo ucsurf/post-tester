@@ -86,14 +86,20 @@ function EnvironmentEditor({ name, isDefault }: { name: string; isDefault: boole
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    // Ignore a slow response for an environment that is no longer selected.
+    let active = true;
     api
       .getEnvironment(name)
       .then((env) => {
+        if (!active) return;
         const normalized = { description: env.description ?? "", variables: env.variables ?? {} };
         setSaved(normalized);
         setDraft(normalized);
       })
-      .catch((e: unknown) => setError(errorText(e)));
+      .catch((e: unknown) => active && setError(`Could not load the environment “${name}”: ${errorText(e)}`));
+    return () => {
+      active = false;
+    };
   }, [name]);
 
   if (error) return <p className="error-box">{error}</p>;

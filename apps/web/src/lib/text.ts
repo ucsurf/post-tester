@@ -58,17 +58,23 @@ export function isJsonContentType(contentType: string | null | undefined): boole
 }
 
 /**
- * Whether a content type matches one of a viewer's patterns. Patterns may use `*`
- * as a wildcard, e.g. `image/*`, `application/*+json` or `*`.
+ * Whether a content type matches one of a viewer's patterns:
+ * - no patterns: every response (the viewer did not restrict itself);
+ * - `*` (or `*` slash `*`): every response, even one without a content type;
+ * - `*` inside a pattern is a wildcard: `image/*`, `application/*+json`;
+ * - a trailing `/` is a prefix: `text/` matches `text/csv`;
+ * - otherwise the media type must be equal (parameters such as `charset` are ignored).
  */
 export function matchesContentType(contentType: string | null | undefined, patterns: readonly string[]): boolean {
+  if (patterns.length === 0) return true;
   const type = mediaType(contentType);
-  if (!type) return false;
   return patterns.some((pattern) => {
     const p = mediaType(pattern);
     if (p === "*" || p === "*/*") return true;
-    const regex = new RegExp(`^${p.split("*").map(escapeRegex).join(".*")}$`);
-    return regex.test(type);
+    if (!type || !p) return false;
+    if (p.endsWith("/")) return type.startsWith(p);
+    if (!p.includes("*")) return type === p;
+    return new RegExp(`^${p.split("*").map(escapeRegex).join(".*")}$`).test(type);
   });
 }
 

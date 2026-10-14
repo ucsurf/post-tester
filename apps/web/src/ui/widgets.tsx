@@ -1,5 +1,5 @@
 import type { Outcome, Source } from "@post-tester/bindings";
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { statusTone } from "../lib/format";
 import { sourceInfo, sourceLabel } from "../lib/source";
 import type { SpanStatus } from "../live/selectors";
@@ -87,29 +87,34 @@ export function EmptyState({ icon, title, children, action }: { icon?: string; t
   );
 }
 
-export async function copyText(text: string, what = "Copied to clipboard"): Promise<void> {
+/** Copies to the clipboard; shows an error toast if the browser refuses. Returns success. */
+async function writeClipboard(text: string): Promise<boolean> {
   try {
     await navigator.clipboard.writeText(text);
-    showToast("success", what);
+    return true;
   } catch {
     showToast("error", "Could not copy", "The browser blocked clipboard access. Select the text and copy it manually.");
+    return false;
   }
+}
+
+export async function copyText(text: string, what = "Copied to clipboard"): Promise<void> {
+  if (await writeClipboard(text)) showToast("success", what);
 }
 
 export function CopyButton({ text, label = "Copy", small = true }: { text: string; label?: string; small?: boolean }) {
   const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    if (!copied) return;
+    const timer = setTimeout(() => setCopied(false), 1500);
+    return () => clearTimeout(timer);
+  }, [copied]);
   return (
     <button
       type="button"
       className={`btn btn-ghost ${small ? "btn-sm" : ""}`}
       onClick={async () => {
-        try {
-          await navigator.clipboard.writeText(text);
-          setCopied(true);
-          setTimeout(() => setCopied(false), 1500);
-        } catch {
-          showToast("error", "Could not copy", "The browser blocked clipboard access. Select the text and copy it manually.");
-        }
+        if (await writeClipboard(text)) setCopied(true);
       }}
     >
       <Icon name={copied ? "check" : "copy"} size={12} />

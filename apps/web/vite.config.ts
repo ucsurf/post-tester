@@ -27,7 +27,22 @@ export default defineConfig({
     outDir: "dist",
     emptyOutDir: true,
     sourcemap: false,
-    chunkSizeWarningLimit: 1500,
+    // CodeMirror (~400 KB) loads with the first editor; React and the shell load first.
+    chunkSizeWarningLimit: 450,
+    rolldownOptions: {
+      output: {
+        codeSplitting: {
+          groups: [
+            { name: "react", test: /node_modules[\\/](react|react-dom|scheduler)[\\/]/ },
+            // The JSON/JavaScript grammars stay with the full code editor (not needed by the URL bar).
+            {
+              name: "codemirror",
+              test: /node_modules[\\/](?!@codemirror[\\/]lang-|@lezer[\\/](?:javascript|json)[\\/])(?:@codemirror|@lezer|codemirror|style-mod|w3c-keyname|crelt|@marijn)[\\/]/,
+            },
+          ],
+        },
+      },
+    },
   },
   server: {
     host: "127.0.0.1",

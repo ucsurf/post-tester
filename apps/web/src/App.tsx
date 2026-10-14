@@ -1,13 +1,10 @@
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { getToken } from "./api/http";
+import { readLocal, writeLocal } from "./lib/storage";
 import { ActivityPanel } from "./features/activity/ActivityPanel";
-import { SpanDrawer } from "./features/activity/SpanDrawer";
-import { ImportDialog } from "./features/import/ImportDialog";
-import { LoadTestDialog } from "./features/runner/LoadTestDialog";
-import { RunnerDialog } from "./features/runner/RunnerDialog";
 import { Sidebar } from "./features/sidebar/Sidebar";
 import { ConnectionErrorScreen, LoadingScreen, NoTokenScreen, NoWorkspaceScreen } from "./features/workspace/Screens";
-import { liveConnection, useLiveState } from "./live/live";
+import { liveConnection, useLiveSelector } from "./live/live";
 import { appStore, loadWorkspace } from "./state/app";
 import { useStore } from "./state/store";
 import { MainArea } from "./MainArea";
@@ -15,6 +12,13 @@ import { QuestionDialog } from "./ui/QuestionDialog";
 import { Splitter, usePersistentNumber } from "./ui/Splitter";
 import { Toasts } from "./ui/Toasts";
 import "./styles/layout.css";
+
+// Loaded when first opened, to keep the initial bundle small.
+const SpanDrawer = lazy(() => import("./features/activity/SpanDrawer"));
+const ImportDialog = lazy(() => import("./features/import/ImportDialog").then((m) => ({ default: m.ImportDialog })));
+const RunnerDialog = lazy(() => import("./features/runner/RunnerDialog").then((m) => ({ default: m.RunnerDialog })));
+const FolderSettingsDialog = lazy(() => import("./features/sidebar/FolderSettingsDialog").then((m) => ({ default: m.FolderSettingsDialog })));
+const LoadTestDialog = lazy(() => import("./features/runner/LoadTestDialog").then((m) => ({ default: m.LoadTestDialog })));
 
 export function App() {
   const token = getToken();
@@ -69,11 +73,7 @@ function Shell() {
   const toggleDock = () => {
     const next = dock === "right" ? "bottom" : "right";
     setDockPref(next);
-    try {
-      window.localStorage.setItem(DOCK_KEY, next);
-    } catch {
-      // Not remembered across reloads; fine.
-    }
+    writeLocal(DOCK_KEY, next);
   };
 
   const narrow = width < 1000;
@@ -103,31 +103,41 @@ function Shell() {
           </>
         )}
       </div>
-      <SpanDrawer />
-      <Dialogs />
+      {/* Separate boundaries: loading a dialog must not hide an open drawer. */}
+      <Suspense fallback={null}>
+        <LazyDrawer />
+      </Suspense>
+      <Suspense fallback={null}>
+        <Dialogs />
+      </Suspense>
     </div>
   );
 }
 
 function readDock(): DockPreference {
-  try {
-    const v = window.localStorage.getItem(DOCK_KEY);
-    return v === "right" || v === "bottom" ? v : "auto";
-  } catch {
-    return "auto";
-  }
+  const v = readLocal(DOCK_KEY);
+  return v === "right" || v === "bottom" ? v : "auto";
 }
 
 /** Shown while Live Activity is hidden, so running work is never invisible. */
 function ActivityReopen({ onOpen }: { onOpen: () => void }) {
-  const state = useLiveState();
-  const running = state.roots.filter((id) => state.spans.get(id)?.outcome === null).length;
+  const running = useLiveSelector((state) => state.roots.filter((id) => state.spans.get(id)?.outcome === null).length);
   return (
     <button type="button" className="activity-reopen" onClick={onOpen}>
       <span className="live-dot" data-state="open" />
       Live Activity{running > 0 ? ` · ${running} running` : ""}
     </button>
   );
+}
+
+/** Mounts the drawer module only once something is selected. */
+function LazyDrawer() {
+  const selected = useStore(appStore, (s) => s.selectedSpan !== null);
+  const [loaded, setLoaded] = useState(false);
+  useEffect(() => {
+    if (selected) setLoaded(true);
+  }, [selected]);
+  return selected || loaded ? <SpanDrawer /> : null;
 }
 
 function Dialogs() {
@@ -140,5 +150,7 @@ function Dialogs() {
       return <RunnerDialog folder={dialog.folder} requests={dialog.requests} />;
     case "load-test":
       return <LoadTestDialog requestKey={dialog.requestKey} />;
+    case "folder-settings":
+      return <FolderSettingsDialog folder={dialog.folder} />;
   }
 }

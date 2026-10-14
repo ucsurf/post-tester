@@ -1,5 +1,9 @@
 /* Design tokens. Light by default; dark via the OS setting or the manual toggle
-   (`<html data-theme="light|dark">`, stored in localStorage). */
+   (`<html data-theme="light|dark">`, stored in localStorage).
+
+   Text colors meet WCAG AA (4.5:1) on every surface they are used on (--bg through
+   --bg-active, and the matching -soft backgrounds for tones). Check changes with a
+   contrast tool; --text-faint is the closest to the limit. */
 
 :root {
   color-scheme: light;
@@ -35,20 +39,20 @@
   --border: #e2e5ea;
   --border-strong: #cdd2da;
   --text: #0f172a;
-  --text-muted: #556274;
-  --text-faint: #8a94a6;
+  --text-muted: #4a5466;
+  --text-faint: #5b6678;
 
   --accent: #4f46e5;
   --accent-hover: #4338ca;
   --accent-contrast: #ffffff;
   --accent-soft: #eef0ff;
-  --accent-2: #0d9488;
+  --accent-2: #0e6f68;
 
-  --success: #15803d;
+  --success: #136c33;
   --success-soft: #e7f6ec;
-  --warning: #b45309;
+  --warning: #974508;
   --warning-soft: #fdf3e2;
-  --danger: #c62828;
+  --danger: #b42323;
   --danger-soft: #fdecec;
   --info: #0369a1;
   --info-soft: #e6f2fa;
@@ -56,11 +60,11 @@
   --redirect-soft: #f2ecfe;
   --neutral-soft: #eef0f3;
 
-  --m-get: #15803d;
-  --m-post: #b45309;
+  --m-get: #136c33;
+  --m-post: #974508;
   --m-put: #1d4ed8;
   --m-patch: #7c3aed;
-  --m-delete: #c62828;
+  --m-delete: #b42323;
   --m-other: #475569;
 
   --phase-dns: #14b8a6;
@@ -71,9 +75,9 @@
 
   --tpl-variable: #4f46e5;
   --tpl-variable-bg: #eef0ff;
-  --tpl-secret: #b45309;
+  --tpl-secret: #974508;
   --tpl-secret-bg: #fdf3e2;
-  --tpl-function: #0d9488;
+  --tpl-function: #0e6f68;
   --tpl-function-bg: #e3f6f3;
 
   --shadow-sm: 0 1px 2px rgb(15 23 42 / 0.06);
@@ -95,8 +99,8 @@
     --border: #252b37;
     --border-strong: #353d4d;
     --text: #e5e9f0;
-    --text-muted: #9aa5b8;
-    --text-faint: #6b7588;
+    --text-muted: #a6b0c2;
+    --text-faint: #8b95a8;
 
     --accent: #818cf8;
     --accent-hover: #a5b4fc;
@@ -148,8 +152,8 @@
   --border: #252b37;
   --border-strong: #353d4d;
   --text: #e5e9f0;
-  --text-muted: #9aa5b8;
-  --text-faint: #6b7588;
+  --text-muted: #a6b0c2;
+  --text-faint: #8b95a8;
 
   --accent: #818cf8;
   --accent-hover: #a5b4fc;

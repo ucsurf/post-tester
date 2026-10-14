@@ -223,13 +223,13 @@
   align-self: center;
 }
 
-@media (max-width: 1100px) {
+@container main (max-width: 780px) {
   .cheatsheet {
     display: none;
   }
 }
 
-@media (max-width: 900px) {
+@container main (max-width: 620px) {
   .graphql,
   .scripts-editors {
     grid-template-columns: 1fr;

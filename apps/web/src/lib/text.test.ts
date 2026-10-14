@@ -26,7 +26,18 @@ describe("content types", () => {
     expect(matchesContentType("application/vnd.api+json", ["application/*+json"])).toBe(true);
     expect(matchesContentType("text/csv; charset=utf-8", ["text/csv"])).toBe(true);
     expect(matchesContentType("text/html", ["text/csv"])).toBe(false);
-    expect(matchesContentType(undefined, ["*"])).toBe(false);
+    expect(matchesContentType("text/html", ["text/"])).toBe(true);
+    expect(matchesContentType("application/json", ["application/json", "text/*"])).toBe(true);
+    expect(matchesContentType("application/jsonx", ["application/json"])).toBe(false);
+  });
+
+  it("treats no patterns and * as every response", () => {
+    expect(matchesContentType("image/png", [])).toBe(true);
+    expect(matchesContentType(undefined, [])).toBe(true);
+    expect(matchesContentType(undefined, ["*"])).toBe(true);
+    expect(matchesContentType("text/plain", ["*/*"])).toBe(true);
+    expect(matchesContentType(undefined, ["image/*"])).toBe(false);
+    expect(matchesContentType("", ["text/"])).toBe(false);
   });
 });
 

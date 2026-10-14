@@ -34,7 +34,7 @@ export function Modal({ title, onClose, children, footer, width = 560, dismissib
       onCloseRef.current();
     }
     if (event.key !== "Tab" || !panel.current) return;
-    const focusable = [...panel.current.querySelectorAll<HTMLElement>("button, [href], input, select, textarea, [tabindex]:not([tabindex='-1'])")].filter(
+    const focusable = [...panel.current.querySelectorAll<HTMLElement>("button, [href], input, select, textarea, [contenteditable='true'], [tabindex]:not([tabindex='-1'])")].filter(
       (el) => !el.hasAttribute("disabled") && el.offsetParent !== null,
     );
     const first = focusable[0];

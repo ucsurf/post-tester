@@ -109,6 +109,13 @@ export function flattenRows(state: LiveState, rootIds: readonly SpanId[], expand
   return rows;
 }
 
+/** Counts spans by status. */
+export function countByStatus(spans: Iterable<SpanState>): Record<SpanStatus, number> {
+  const counts: Record<SpanStatus, number> = { running: 0, ok: 0, failed: 0, error: 0, cancelled: 0 };
+  for (const span of spans) counts[spanStatus(span)]++;
+  return counts;
+}
+
 /** Counts children by outcome, for a run's summary line. */
 export function childCounts(state: LiveState, span: SpanState): Record<SpanStatus, number> {
   const counts: Record<SpanStatus, number> = { running: 0, ok: 0, failed: 0, error: 0, cancelled: 0 };

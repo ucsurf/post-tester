@@ -69,6 +69,8 @@ export function Menu({ trigger, items, align = "start", emptyText = "Nothing her
               disabled={item.disabled}
               onClick={() => {
                 setOpen(false);
+                // Back to the trigger first, so a dialog opened by the item returns focus there.
+                root.current?.querySelector<HTMLElement>("[aria-haspopup]")?.focus();
                 item.onSelect();
               }}
             >

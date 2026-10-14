@@ -256,3 +256,25 @@
   background: var(--accent);
   box-shadow: none;
 }
+
+/* Shown for a moment while CodeMirror loads (see CodeEditor.tsx / TemplateInput.tsx). */
+.code-editor-loading pre {
+  margin: 0;
+  padding: 6px var(--space-4);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow: auto;
+}
+
+.template-input-loading {
+  display: flex;
+  align-items: center;
+  padding: 5px var(--space-4);
+  font-family: var(--font-mono);
+  font-size: var(--text-md);
+  line-height: 1.4;
+  white-space: pre;
+  overflow: hidden;
+}

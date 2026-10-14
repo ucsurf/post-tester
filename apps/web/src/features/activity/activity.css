@@ -589,3 +589,8 @@
   outline: 2px solid var(--accent);
   outline-offset: -2px;
 }
+
+/* The drawer title receives focus when the drawer opens (for screen readers); it is not a control. */
+.drawer [data-drawer-focus]:focus {
+  outline: none;
+}

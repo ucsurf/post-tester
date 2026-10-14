@@ -1,10 +1,12 @@
-import { useEffect, useMemo, useState } from "react";
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api } from "../../api/client";
 import { formatClock, formatDuration, formatSize, plural } from "../../lib/format";
 import { sourceLabel } from "../../lib/source";
-import { useLiveState, useSpan } from "../../live/live";
-import { childCounts, spanDisplayTitle, spanStatus } from "../../live/selectors";
-import type { SpanState } from "../../live/spans";
+import { headerValue } from "../../lib/text";
+import { useLiveSelector, useSpan } from "../../live/live";
+import { countByStatus, spanDisplayTitle, spanStatus } from "../../live/selectors";
+import type { LiveState, SpanState } from "../../live/spans";
+import { shallowEqualArrays } from "../../state/store";
 import { appStore, openRequest, selectSpan } from "../../state/app";
 import { useStore } from "../../state/store";
 import { showError, showToast } from "../../state/toasts";
@@ -20,9 +22,38 @@ import "./activity.css";
 
 type DrawerTab = "overview" | "timeline" | "request" | "response" | "messages" | "logs" | "tests" | "variables" | "raw";
 
-/** Details of the selected span, updating live while it runs. */
-export function SpanDrawer() {
+/**
+ * Details of the selected span, updating live while it runs. Not modal (the rest of
+ * the app stays usable), but focus moves into it when it opens and returns to where
+ * it was (e.g. the activity row) when it closes.
+ */
+export default function SpanDrawer() {
   const selected = useStore(appStore, (s) => s.selectedSpan);
+  const returnTo = useRef<HTMLElement | null>(null);
+  const open = selected !== null;
+
+  useLayoutEffect(() => {
+    if (!open) return;
+    const active = document.activeElement;
+    returnTo.current = active instanceof HTMLElement && !active.closest(".drawer") ? active : null;
+    document.querySelector<HTMLElement>(".drawer [data-drawer-focus]")?.focus();
+    return () => {
+      const target = returnTo.current;
+      // Only restore when focus was inside the drawer (or lost), not if the user moved on.
+      const current = document.activeElement;
+      if (target?.isConnected && (current === null || current === document.body || current.closest(".drawer"))) target.focus();
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !e.defaultPrevented && !document.querySelector(".modal-backdrop, .menu")) selectSpan(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open]);
+
   if (!selected) return null;
   return <Drawer key={selected} id={selected} />;
 }
@@ -31,20 +62,14 @@ function Drawer({ id }: { id: string }) {
   const span = useSpan(id);
   const [tab, setTab] = useState<DrawerTab | null>(null);
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !document.querySelector(".modal-backdrop")) selectSpan(null);
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
-
   if (!span) {
     return (
       <aside className="drawer" aria-label="Operation details">
         <div className="drawer-header">
           <div className="drawer-title">
-            <h2>Operation not found</h2>
+            <h2 tabIndex={-1} data-drawer-focus>
+              Operation not found
+            </h2>
             <IconButton icon="x" label="Close details" onClick={() => selectSpan(null)} />
           </div>
         </div>
@@ -102,7 +127,7 @@ function DrawerHeader({ span }: { span: SpanState }) {
       <div className="drawer-title">
         <OutcomeIcon status={status} />
         {method && <MethodBadge method={method} />}
-        <h2 className="truncate" title={spanDisplayTitle(span)}>
+        <h2 className="truncate" title={spanDisplayTitle(span)} tabIndex={-1} data-drawer-focus>
           {spanDisplayTitle(span)}
         </h2>
         {running && (
@@ -187,6 +212,7 @@ function DrawerContent({ span, tab }: { span: SpanState; tab: DrawerTab }) {
           <div className="drawer-section" style={{ padding: 0 }}>
             <PayloadView
               payload={span.response.body}
+              contentType={headerValue(span.response.headers, "content-type") ?? null}
               viewer={{
                 status: span.response.status,
                 statusText: span.response.statusText,
@@ -242,7 +268,10 @@ function DrawerContent({ span, tab }: { span: SpanState; tab: DrawerTab }) {
 }
 
 function RawEvents({ span }: { span: SpanState }) {
-  const text = useMemo(() => JSON.stringify(span.events, null, 2), [span.events]);
+  // Serializing (and laying out) thousands of events is slow: on a busy stream, refresh
+  // at most once a second instead of every frame.
+  const events = useThrottled(span.events, 1000);
+  const text = useMemo(() => JSON.stringify(events, null, 2), [events]);
   return (
     <div className="drawer-section">
       {span.eventCount > span.events.length && <p className="hint">Showing the last {span.events.length} of {span.eventCount} events.</p>}
@@ -251,9 +280,13 @@ function RawEvents({ span }: { span: SpanState }) {
   );
 }
 
+const childSpans = (state: LiveState, span: SpanState): SpanState[] =>
+  span.children.map((id) => state.spans.get(id)).filter((child): child is SpanState => child !== undefined);
+
 function ChildrenView({ span }: { span: SpanState }) {
-  const state = useLiveState();
-  const counts = childCounts(state, span);
+  // Re-renders when a child changes, not on every batch; unchanged rows are memoized.
+  const children = useLiveSelector((state) => childSpans(state, span), shallowEqualArrays);
+  const counts = useMemo(() => countByStatus(children), [children]);
   const logs = span.logs.slice(-5);
   return (
     <>
@@ -266,19 +299,9 @@ function ChildrenView({ span }: { span: SpanState }) {
       {span.children.length > 0 && (
         <div className="drawer-section">
           <div className="child-list">
-            {span.children.map((id) => {
-              const child = state.spans.get(id);
-              if (!child) return null;
-              return (
-                <button key={id} type="button" onClick={() => selectSpan(id)}>
-                  <OutcomeIcon status={spanStatus(child)} />
-                  <MethodBadge method={child.summary.method ?? child.request?.method} />
-                  <span className="truncate grow mono">{spanDisplayTitle(child)}</span>
-                  {child.status !== null && <StatusBadge status={child.status} />}
-                  <span className="mono faint">{formatDuration(child.durationMs)}</span>
-                </button>
-              );
-            })}
+            {children.map((child) => (
+              <ChildRow key={child.id} span={child} />
+            ))}
           </div>
         </div>
       )}
@@ -297,4 +320,36 @@ function ChildrenView({ span }: { span: SpanState }) {
       )}
     </>
   );
+}
+
+const ChildRow = memo(function ChildRow({ span }: { span: SpanState }) {
+  return (
+    <button type="button" onClick={() => selectSpan(span.id)}>
+      <OutcomeIcon status={spanStatus(span)} />
+      <MethodBadge method={span.summary.method ?? span.request?.method} />
+      <span className="truncate grow mono">{spanDisplayTitle(span)}</span>
+      {span.status !== null && <StatusBadge status={span.status} />}
+      <span className="mono faint">{formatDuration(span.durationMs)}</span>
+    </button>
+  );
+});
+
+/** `value`, updated at most every `ms` (the latest value always shows up eventually). */
+function useThrottled<T>(value: T, ms: number): T {
+  const [shown, setShown] = useState(value);
+  const lastAt = useRef(0);
+  useEffect(() => {
+    const wait = lastAt.current + ms - Date.now();
+    if (wait <= 0) {
+      lastAt.current = Date.now();
+      setShown(value);
+      return;
+    }
+    const timer = setTimeout(() => {
+      lastAt.current = Date.now();
+      setShown(value);
+    }, wait);
+    return () => clearTimeout(timer);
+  }, [value, ms]);
+  return shown;
 }

@@ -1,9 +1,11 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../../api/client";
 import { errorText } from "../../api/http";
 import type { Cookie, ExecutionView, ResponseView } from "../../api/types";
 import { formatDuration, formatSize, plural } from "../../lib/format";
-import { useLiveState, useSpan } from "../../live/live";
+import { modKey } from "../../lib/platform";
+import { headerValue } from "../../lib/text";
+import { useLiveSelector, useSpan } from "../../live/live";
 import { findUserSpan } from "../../live/selectors";
 import type { SpanState } from "../../live/spans";
 import { appStore, selectSpan, sendRequest, updateDraft, type RequestDoc } from "../../state/app";
@@ -58,9 +60,8 @@ export function ResponsePanel({ docKey }: { docKey: string }) {
 }
 
 function Sending({ doc, startedAt, controller }: { doc: RequestDoc; startedAt: number; controller: AbortController }) {
-  const state = useLiveState();
   // Allow for small clock differences between the browser and the server.
-  const span = findUserSpan(state, { requestId: doc.id, url: doc.draft.url }, startedAt - 2000);
+  const span = useLiveSelector((state) => findUserSpan(state, { requestId: doc.id, url: doc.draft.url }, startedAt - 2000));
 
   const cancel = async () => {
     if (span) {
@@ -166,7 +167,7 @@ function Result({ result, docKey }: { result: ExecutionView; docKey: string }) {
             {tab === "body" && (
               <PayloadView
                 payload={response.body}
-                contentType={headerContentType(response)}
+                contentType={headerValue(response.headers, "content-type") ?? null}
                 viewer={{ status: response.status, statusText: response.statusText, headers: response.headers, timeMs: response.timeMs }}
               />
             )}
@@ -226,10 +227,6 @@ function SaveExampleButton({ docKey, response }: { docKey: string; response: Res
   );
 }
 
-function headerContentType(response: ResponseView): string | null {
-  return response.headers.find(([name]) => name.toLowerCase() === "content-type")?.[1] ?? null;
-}
-
 function timingsToPhases(response: ResponseView) {
   const t = response.timings;
   return {
@@ -246,13 +243,20 @@ function Cookies({ response }: { response: ResponseView }) {
   const [error, setError] = useState<string | null>(null);
   const setCookies = response.headers.filter(([name]) => name.toLowerCase() === "set-cookie");
 
-  const load = () => {
+  const mounted = useRef(true);
+  const load = useCallback(() => {
     api
       .cookies()
-      .then(setJar)
-      .catch((e: unknown) => setError(errorText(e)));
-  };
-  useEffect(load, []);
+      .then((cookies) => mounted.current && setJar(cookies))
+      .catch((e: unknown) => mounted.current && setError(`Could not load the cookie jar: ${errorText(e)}`));
+  }, []);
+  useEffect(() => {
+    mounted.current = true;
+    load();
+    return () => {
+      mounted.current = false;
+    };
+  }, [load]);
 
   const clear = async () => {
     try {
@@ -297,8 +301,4 @@ function Cookies({ response }: { response: ResponseView }) {
       )}
     </div>
   );
-}
-
-export function modKey(): string {
-  return typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘" : "Ctrl";
 }

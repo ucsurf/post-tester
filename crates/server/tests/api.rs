@@ -22,7 +22,7 @@ impl TestServer {
         let engine = Arc::new(Engine::new(EventBus::default(), Some(workspace), Arc::new(MemorySecrets::default())));
         let plugins = PluginHost::attach(&engine);
         let config = ServerConfig { port: 0, token: Some("secret-token".into()), ..Default::default() };
-        let server = serve(config, engine, plugins, |_| None).await.unwrap();
+        let server = serve(config, engine, plugins).await.unwrap();
         Self { server, _dir: dir }
     }
 
@@ -176,4 +176,39 @@ async fn live_stream_rejects_missing_token() {
     let s = TestServer::start().await;
     let url = format!("ws://127.0.0.1:{}/api/live", s.server.addr.port());
     assert!(tokio_tungstenite::connect_async(url).await.is_err());
+}
+
+#[tokio::test]
+async fn mcp_endpoint_requires_the_token() {
+    let s = TestServer::start().await;
+    let body = serde_json::json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list" });
+    let response = s.call("POST", "/mcp", &[("Accept", "application/json, text/event-stream")], Some(body)).await;
+    assert_eq!(response.status, 401);
+}
+
+#[tokio::test]
+async fn post_tester_can_test_its_own_mcp_server() {
+    let s = TestServer::start().await;
+    let connect = serde_json::json!({
+        "name": "self",
+        "transport": {
+            "type": "http",
+            "url": format!("{}/mcp", s.base()),
+            "headers": [["Authorization", "Bearer secret-token"]]
+        }
+    });
+    let (status, session) = s.api("POST", "/api/mcp/connect", Some(connect)).await;
+    assert_eq!(status, 200, "{session}");
+    assert_eq!(session["serverName"], "post-tester");
+    let tools: Vec<&str> = session["tools"].as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap()).collect();
+    assert!(tools.contains(&"send_request"), "{tools:?}");
+
+    let id = session["id"].as_str().unwrap();
+    let (status, result) = s.api("POST", &format!("/api/mcp/{id}/call"), Some(serde_json::json!({ "tool": "get_workspace" }))).await;
+    assert_eq!(status, 200, "{result}");
+    assert!(result.to_string().contains("Test"), "the workspace name should be in the result: {result}");
+
+    let (_, sessions) = s.api("GET", "/api/mcp/sessions", None).await;
+    assert_eq!(sessions.as_array().unwrap().len(), 1);
+    assert_eq!(s.api("DELETE", &format!("/api/mcp/{id}"), None).await.0, 204);
 }

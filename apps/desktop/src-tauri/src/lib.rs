@@ -35,7 +35,7 @@ pub fn run() {
             let server = tauri::async_runtime::block_on(async {
                 plugins.load_workspace(&workspace).await;
                 let config = ServerConfig { port: 0, ..Default::default() };
-                serve(config, engine.clone(), plugins.clone(), |_| None).await
+                serve(config, engine.clone(), plugins.clone()).await
             })?;
             tracing::info!("post-tester server on {}", server.addr);
 

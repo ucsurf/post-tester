@@ -15,6 +15,7 @@ path = "src/main.rs"
 post-tester-core = { workspace = true, features = ["keyring"] }
 post-tester-plugin-host.workspace = true
 post-tester-server.workspace = true
+post-tester-mcp.workspace = true
 tokio.workspace = true
 clap.workspace = true
 anyhow.workspace = true

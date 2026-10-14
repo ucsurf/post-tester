@@ -1,0 +1,37 @@
+[package]
+name = "post-tester-mcp"
+description = "MCP for post-tester: a server so AI agents can use it, and a client to test any MCP server."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+post-tester-core.workspace = true
+post-tester-plugin-host.workspace = true
+rmcp = { workspace = true, features = [
+    "server",
+    "client",
+    "transport-io",
+    "transport-child-process",
+    "transport-streamable-http-server",
+    "transport-streamable-http-client-reqwest",
+    "reqwest-tls-no-provider",
+] }
+# HTTPS for the MCP client, using the same crypto backend (ring) as the rest of post-tester.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+http.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+bytes.workspace = true
+ts-rs.workspace = true
+
+[dev-dependencies]
+axum.workspace = true
+tempfile = "3"
+
+[lints]
+workspace = true

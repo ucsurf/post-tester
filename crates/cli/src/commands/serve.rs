@@ -19,12 +19,16 @@ pub struct ServeArgs {
     /// Don't open the browser.
     #[arg(long)]
     no_open: bool,
+    /// Don't let AI agents connected over MCP change the workspace.
+    #[arg(long)]
+    read_only: bool,
 }
 
 pub async fn serve(workspace: Option<&Path>, args: ServeArgs) -> Result<ExitCode> {
     let ctx = Context::open(workspace, false).await?;
-    let config = ServerConfig { host: args.host, port: args.port, token: None };
-    let server = start_server(config, ctx.engine.clone(), ctx.plugins.clone(), |_| None).await?;
+    let mcp = post_tester_mcp::ServerOptions { read_only: args.read_only };
+    let config = ServerConfig { host: args.host, port: args.port, token: None, mcp };
+    let server = start_server(config, ctx.engine.clone(), ctx.plugins.clone()).await?;
 
     let workspace_line = match ctx.engine.workspace() {
         Some(ws) => ws.root().display().to_string(),
@@ -61,6 +65,11 @@ pub struct McpArgs {
     read_only: bool,
 }
 
-pub async fn mcp(_workspace: Option<&Path>, _args: McpArgs) -> Result<ExitCode> {
-    anyhow::bail!("the MCP server is not available in this build yet")
+/// Serves MCP over stdin/stdout. Everything else must go to stderr, because
+/// stdout carries the protocol.
+pub async fn mcp(workspace: Option<&Path>, args: McpArgs) -> Result<ExitCode> {
+    let ctx = Context::open(workspace, false).await?;
+    let options = post_tester_mcp::ServerOptions { read_only: args.read_only };
+    post_tester_mcp::serve_stdio(ctx.engine.clone(), Some(ctx.plugins.clone()), options).await?;
+    Ok(ExitCode::SUCCESS)
 }

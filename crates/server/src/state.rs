@@ -1,6 +1,7 @@
 //! Shared state for every request handler.
 
 use post_tester_core::Engine;
+use post_tester_mcp::McpClients;
 use post_tester_plugin_host::PluginHost;
 use std::sync::Arc;
 
@@ -8,6 +9,8 @@ use std::sync::Arc;
 pub struct AppState {
     pub engine: Arc<Engine>,
     pub plugins: Arc<PluginHost>,
+    /// Connections to MCP servers the user is testing.
+    pub mcp: Arc<McpClients>,
     pub token: String,
     /// Values accepted in the `Host` header, e.g. `127.0.0.1:7777`.
     pub allowed_hosts: Arc<Vec<String>>,

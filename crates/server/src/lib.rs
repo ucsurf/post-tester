@@ -19,6 +19,7 @@ pub mod views;
 
 use axum::Router;
 use post_tester_core::Engine;
+use post_tester_mcp::{McpClients, ServerOptions as McpServerOptions};
 use post_tester_plugin_host::PluginHost;
 use state::AppState;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -32,11 +33,13 @@ pub struct ServerConfig {
     pub port: u16,
     /// A fixed token (e.g. for the desktop app); random when `None`.
     pub token: Option<String>,
+    /// Options for the `/mcp` endpoint that AI agents connect to.
+    pub mcp: McpServerOptions,
 }
 
 impl Default for ServerConfig {
     fn default() -> Self {
-        Self { host: IpAddr::V4(Ipv4Addr::LOCALHOST), port: 7777, token: None }
+        Self { host: IpAddr::V4(Ipv4Addr::LOCALHOST), port: 7777, token: None, mcp: McpServerOptions::default() }
     }
 }
 
@@ -50,22 +53,18 @@ pub struct RunningServer {
     pub task: tokio::task::JoinHandle<std::io::Result<()>>,
 }
 
-/// Builds the full router: API, MCP and UI, behind the security checks.
-pub fn router(state: AppState, extra: Option<Router<AppState>>) -> Router {
-    let mut app = routes::api();
-    if let Some(extra) = extra {
-        app = app.merge(extra);
-    }
-    app.fallback(assets::serve).layer(axum::middleware::from_fn_with_state(state.clone(), security::guard)).with_state(state)
+/// Builds the full router: API, MCP and UI, all behind the security checks.
+pub fn router(state: AppState, mcp: McpServerOptions) -> Router {
+    let mcp_service = post_tester_mcp::http_service(state.engine.clone(), Some(state.plugins.clone()), mcp);
+    routes::api()
+        .nest_service("/mcp", mcp_service)
+        .fallback(assets::serve)
+        .layer(axum::middleware::from_fn_with_state(state.clone(), security::guard))
+        .with_state(state)
 }
 
-/// Starts listening. `extra` lets the caller mount more routes (e.g. MCP).
-pub async fn serve(
-    config: ServerConfig,
-    engine: Arc<Engine>,
-    plugins: Arc<PluginHost>,
-    extra: impl FnOnce(&AppState) -> Option<Router<AppState>>,
-) -> std::io::Result<RunningServer> {
+/// Starts listening.
+pub async fn serve(config: ServerConfig, engine: Arc<Engine>, plugins: Arc<PluginHost>) -> std::io::Result<RunningServer> {
     let listener = tokio::net::TcpListener::bind((config.host, config.port)).await.map_err(|e| {
         if e.kind() == std::io::ErrorKind::AddrInUse {
             std::io::Error::new(
@@ -84,8 +83,9 @@ pub async fn serve(
         allowed_hosts.push(addr.to_string());
     }
     let base_url = format!("http://127.0.0.1:{port}");
-    let state = AppState { engine, plugins, token: token.clone(), allowed_hosts: Arc::new(allowed_hosts), base_url: base_url.clone() };
-    let app = router(state.clone(), extra(&state));
+    let mcp = Arc::new(McpClients::new(engine.clone()));
+    let state = AppState { engine, plugins, mcp, token: token.clone(), allowed_hosts: Arc::new(allowed_hosts), base_url: base_url.clone() };
+    let app = router(state, config.mcp);
     let task = tokio::spawn(async move { axum::serve(listener, app).await });
     Ok(RunningServer { addr, url: format!("{base_url}/?token={token}"), token, task })
 }

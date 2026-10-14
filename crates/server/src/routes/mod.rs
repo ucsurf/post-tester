@@ -1,6 +1,7 @@
 //! HTTP routes. See `crates/server/API.md` for the contract.
 
 pub mod live;
+pub mod mcp;
 pub mod run;
 pub mod tools;
 pub mod workspace;
@@ -49,4 +50,12 @@ pub fn api() -> Router<AppState> {
         .route("/api/ws/connect", post(tools::ws_connect))
         .route("/api/ws/{id}/send", post(tools::ws_send))
         .route("/api/ws/{id}/close", post(tools::ws_close))
+        // MCP client (testing MCP servers)
+        .route("/api/mcp/connect", post(mcp::connect))
+        .route("/api/mcp/sessions", get(mcp::sessions))
+        .route("/api/mcp/{id}", delete(mcp::close))
+        .route("/api/mcp/{id}/refresh", post(mcp::refresh))
+        .route("/api/mcp/{id}/call", post(mcp::call_tool))
+        .route("/api/mcp/{id}/read", post(mcp::read_resource))
+        .route("/api/mcp/{id}/prompt", post(mcp::get_prompt))
 }

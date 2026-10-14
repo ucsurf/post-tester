@@ -10,6 +10,7 @@ rust-version.workspace = true
 [dependencies]
 post-tester-core.workspace = true
 post-tester-plugin-host.workspace = true
+post-tester-mcp.workspace = true
 axum.workspace = true
 tokio.workspace = true
 futures.workspace = true

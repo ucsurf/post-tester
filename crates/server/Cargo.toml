@@ -1,0 +1,31 @@
+[package]
+name = "post-tester-server"
+description = "The post-tester local server: HTTP + WebSocket API, live events and the web UI."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+post-tester-core.workspace = true
+post-tester-plugin-host.workspace = true
+axum.workspace = true
+tokio.workspace = true
+futures.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+rust-embed.workspace = true
+mime_guess.workspace = true
+rand.workspace = true
+hex.workspace = true
+tracing.workspace = true
+bytes.workspace = true
+
+[dev-dependencies]
+tempfile = "3"
+tokio-tungstenite.workspace = true
+tokio-util.workspace = true
+
+[lints]
+workspace = true

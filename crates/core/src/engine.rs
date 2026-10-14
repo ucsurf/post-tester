@@ -371,6 +371,21 @@ impl Engine {
         Ok(())
     }
 
+    /// Shows exactly what would be sent, without sending it. Secrets are
+    /// masked and scripts, plugin auth and hooks are not run.
+    pub async fn preview(&self, request: &Request, request_id: Option<&str>, environment: Option<String>) -> Result<PreparedRequest> {
+        let folders = match (self.workspace(), request_id) {
+            (Some(ws), Some(id)) => ws.folder_chain(id)?,
+            _ => Vec::new(),
+        };
+        let vars = self.variables(self.resolve_environment(environment).as_deref(), &folders)?;
+        let span = Span::start(&EventBus::new(crate::events::BusConfig { history_len: 1, blob_capacity_bytes: 0 }), Source::System, None, SpanKind::System, "preview", Summary::default());
+        let ctx = MaskedSecrets(self.template_context(vars, &span));
+        let prepared = prepare(request, &folders, &ctx).await?;
+        span.finish_ok(None, None);
+        Ok(prepared.request)
+    }
+
     async fn run_script(
         &self,
         extensions: &Arc<dyn Extensions>,
@@ -415,6 +430,24 @@ fn protocol_of(request: &Request) -> &'static str {
     match request.body {
         crate::model::Body::Graphql { .. } => "graphql",
         _ => "http",
+    }
+}
+
+/// Shows secrets as `•••` instead of their values.
+struct MaskedSecrets<T>(T);
+
+#[async_trait]
+impl<T: TemplateContext> TemplateContext for MaskedSecrets<T> {
+    fn variable(&self, name: &str) -> Option<String> {
+        self.0.variable(name)
+    }
+
+    async fn secret(&self, _name: &str) -> Result<String> {
+        Ok("•••".into())
+    }
+
+    async fn function(&self, name: &str, args: &OrderedMap) -> Result<Option<String>> {
+        self.0.function(name, args).await
     }
 }
 

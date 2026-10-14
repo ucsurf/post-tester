@@ -55,6 +55,7 @@ enum Command {
 
 #[tokio::main]
 async fn main() -> ExitCode {
+    exit_quietly_on_closed_pipe();
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::try_from_env("PT_LOG").unwrap_or_else(|_| "warn".into()))
         .with_writer(std::io::stderr)
@@ -76,11 +77,32 @@ async fn main() -> ExitCode {
         Command::Secret(command) => commands::workspace::secret(workspace, command).await,
         Command::Plugin(command) => commands::plugin::plugin(workspace, command).await,
     };
+    // Whatever happened, the events so far belong in the history (Live Activity).
+    context::flush_history();
     match result {
         Ok(code) => code,
         Err(error) => {
-            eprintln!("{} {error:#}", style::red("error:"));
+            eprintln!("{} {error:#}", style::error_label());
             ExitCode::from(2)
         }
     }
+}
+
+/// `pt run | head` closes stdout early, and Rust's `println!` then panics with
+/// "Broken pipe". That is not an error for a command-line tool: stop quietly,
+/// like other Unix tools do. Every other panic is reported as usual.
+fn exit_quietly_on_closed_pipe() {
+    let default = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let message = info
+            .payload()
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| info.payload().downcast_ref::<&str>().copied())
+            .unwrap_or_default();
+        if message.contains("failed printing to stdout") && message.contains("Broken pipe") {
+            std::process::exit(0);
+        }
+        default(info);
+    }));
 }

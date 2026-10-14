@@ -7,7 +7,9 @@ pub mod tools;
 pub mod workspace;
 
 use crate::state::AppState;
+use crate::{API_BODY_LIMIT, IMPORT_BODY_LIMIT};
 use axum::Router;
+use axum::extract::DefaultBodyLimit;
 use axum::routing::{delete, get, post, put};
 
 pub fn api() -> Router<AppState> {
@@ -39,7 +41,7 @@ pub fn api() -> Router<AppState> {
         // Tools
         .route("/api/codegen/targets", get(tools::codegen_targets))
         .route("/api/codegen", post(tools::generate_code))
-        .route("/api/import", post(tools::import))
+        .route("/api/import", post(tools::import).layer(DefaultBodyLimit::max(IMPORT_BODY_LIMIT)))
         .route("/api/export/targets", get(tools::export_targets))
         .route("/api/export", post(tools::export))
         .route("/api/plugins", get(tools::plugins))
@@ -60,4 +62,6 @@ pub fn api() -> Router<AppState> {
         .route("/api/mcp/{id}/call", post(mcp::call_tool))
         .route("/api/mcp/{id}/read", post(mcp::read_resource))
         .route("/api/mcp/{id}/prompt", post(mcp::get_prompt))
+        .layer(DefaultBodyLimit::max(API_BODY_LIMIT))
+        .layer(axum::middleware::from_fn(crate::error::json_errors))
 }

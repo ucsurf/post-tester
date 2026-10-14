@@ -6,7 +6,7 @@ use crate::style;
 use anyhow::{Result, bail};
 use clap::Args;
 use post_tester_core::events::{Outcome, Source};
-use post_tester_core::loadtest::LoadOptions;
+use post_tester_core::loadtest::{Connections, LoadOptions};
 use post_tester_core::model::{Body, KeyValue, Method, Request};
 use post_tester_core::{SendOptions, codegen};
 use std::path::Path;
@@ -39,8 +39,7 @@ impl RequestArgs {
         {
             return Ok((workspace.read_request(&self.target)?, Some(self.target.clone())));
         }
-        let looks_like_url = self.target.contains("://") || self.target.contains('.') || self.target.starts_with("localhost");
-        if !looks_like_url {
+        if !looks_like_url(&self.target) {
             bail!("`{}` is neither a saved request nor a URL. List saved requests with the app or `ls collections/`", self.target);
         }
         let mut request = Request { url: self.target.clone(), ..Default::default() };
@@ -59,6 +58,17 @@ impl RequestArgs {
         request.method = Method::from(self.method.as_deref().unwrap_or(default_method));
         Ok((request, None))
     }
+}
+
+/// URLs may omit the scheme (`localhost:3000/users`, `api.dev/v1`, `[::1]:8080`)
+/// or start with a variable (`{{baseUrl}}/users`). Saved request ids never
+/// contain `:` or `{`, so those always mean a URL.
+fn looks_like_url(target: &str) -> bool {
+    target.contains("://")
+        || target.contains(':')
+        || target.contains("{{")
+        || target.starts_with("localhost")
+        || target.split('/').next().is_some_and(|host| host.contains('.'))
 }
 
 #[derive(Debug, Args)]
@@ -128,6 +138,10 @@ pub struct LoadArgs {
     /// Total number of requests.
     #[arg(short = 'n', long, default_value_t = 100)]
     requests: u32,
+    /// Open a new connection (DNS, TCP, TLS) for every request instead of
+    /// reusing open ones, to include connection setup in the timings.
+    #[arg(long)]
+    fresh_connections: bool,
     /// Print the report as JSON.
     #[arg(long)]
     json: bool,
@@ -143,7 +157,8 @@ pub async fn load(workspace: Option<&Path>, args: LoadArgs) -> Result<ExitCode> 
         concurrency: args.concurrency,
         requests: args.requests,
     };
-    let report = ctx.engine.load_test(&request, request_id, options).await?;
+    let connections = if args.fresh_connections { Connections::Fresh } else { Connections::Reuse };
+    let report = ctx.engine.load_test_with(&request, request_id, options, connections).await?;
     if let Some(printer) = printer {
         printer.finish().await;
     }
@@ -191,4 +206,28 @@ pub async fn codegen(workspace: Option<&Path>, args: CodegenArgs) -> Result<Exit
     };
     println!("{code}");
     Ok(ExitCode::SUCCESS)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn urls_without_a_scheme_are_recognized() {
+        for url in [
+            "https://x.dev",
+            "localhost",
+            "localhost/users",
+            "localhost:3000",
+            "127.0.0.1:8080/a",
+            "[::1]:8080",
+            "api.dev/v1",
+            "{{baseUrl}}/users",
+        ] {
+            assert!(looks_like_url(url), "{url}");
+        }
+        for id in ["auth/login", "users", "v1/get-user", "my request"] {
+            assert!(!looks_like_url(id), "{id}");
+        }
+    }
 }

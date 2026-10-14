@@ -110,20 +110,19 @@ fn write_output(path: Option<&Path>, content: &str) -> Result<()> {
 
 /// A JUnit XML report: one test case per request, failures list the failed tests.
 fn junit(report: &RunReport) -> String {
-    let escape = |s: &str| s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;");
     let failures = report.count(Outcome::Failed);
-    let errors = report.count(Outcome::Error);
+    let errors = report.count(Outcome::Error) + report.count(Outcome::Cancelled);
     let mut xml = format!(
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<testsuites>\n  <testsuite name=\"{}\" tests=\"{}\" failures=\"{failures}\" errors=\"{errors}\" time=\"{:.3}\">\n",
-        escape(&report.name),
+        xml_escape(&report.name),
         report.items.len(),
         report.duration_ms / 1000.0
     );
     for item in &report.items {
         xml.push_str(&format!(
             "    <testcase classname=\"{}\" name=\"{}\" time=\"{:.3}\">\n",
-            escape(&item.request_id),
-            escape(&item.name),
+            xml_escape(&item.request_id),
+            xml_escape(&item.name),
             item.duration_ms / 1000.0
         ));
         match item.outcome {
@@ -134,10 +133,17 @@ fn junit(report: &RunReport) -> String {
                     .filter(|t| !t.passed)
                     .map(|t| format!("{}: {}", t.name, t.detail.as_deref().unwrap_or("failed")))
                     .collect();
-                xml.push_str(&format!("      <failure message=\"{}\"/>\n", escape(&failed.join("; "))));
+                let summary = failed.first().cloned().unwrap_or_else(|| "failed".into());
+                xml.push_str(&format!(
+                    "      <failure message=\"{}\">{}</failure>\n",
+                    xml_escape(&summary),
+                    xml_escape(&failed.join("\n"))
+                ));
             }
             Outcome::Error | Outcome::Cancelled => {
-                xml.push_str(&format!("      <error message=\"{}\"/>\n", escape(item.error.as_deref().unwrap_or("error"))));
+                let fallback = if item.outcome == Outcome::Cancelled { "cancelled" } else { "error" };
+                let error = item.error.as_deref().unwrap_or(fallback);
+                xml.push_str(&format!("      <error message=\"{}\">{}</error>\n", xml_escape(error), xml_escape(error)));
             }
             Outcome::Ok => {}
         }
@@ -145,4 +151,81 @@ fn junit(report: &RunReport) -> String {
     }
     xml.push_str("  </testsuite>\n</testsuites>\n");
     xml
+}
+
+/// Escapes text for XML attributes and elements. Line breaks and tabs become
+/// character references (so attributes keep them), and characters XML 1.0
+/// does not allow at all (other control characters) become `\u{fffd}`.
+fn xml_escape(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&apos;"),
+            '\n' => out.push_str("&#10;"),
+            '\r' => out.push_str("&#13;"),
+            '\t' => out.push_str("&#9;"),
+            '\u{0}'..='\u{1f}' | '\u{fffe}' | '\u{ffff}' => out.push('\u{fffd}'),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use post_tester_core::events::SpanId;
+    use post_tester_core::expr::AssertionResult;
+    use post_tester_core::runner::RunItem;
+
+    fn item(id: &str, outcome: Outcome, tests: Vec<AssertionResult>, error: Option<&str>) -> RunItem {
+        RunItem {
+            request_id: id.into(),
+            name: id.into(),
+            span_id: SpanId::new(),
+            outcome,
+            status: None,
+            duration_ms: 12.0,
+            tests,
+            error: error.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn junit_escapes_everything() {
+        let failed =
+            AssertionResult { name: "json($.a) == \"<b>\"".into(), passed: false, detail: Some("got 'x' & \u{1b}[31m\nnext".into()) };
+        let report = RunReport {
+            span_id: SpanId::new(),
+            name: "R&D <api>".into(),
+            outcome: Outcome::Failed,
+            items: vec![
+                item("a/ok", Outcome::Ok, vec![], None),
+                item("a/failed", Outcome::Failed, vec![failed], None),
+                item("a/error", Outcome::Error, vec![], Some("could not connect to \"x\"")),
+                item("a/cancelled", Outcome::Cancelled, vec![], None),
+            ],
+            duration_ms: 1234.0,
+        };
+        let xml = junit(&report);
+        assert!(xml.contains("name=\"R&amp;D &lt;api&gt;\""), "{xml}");
+        assert!(xml.contains("failures=\"1\" errors=\"2\""), "{xml}");
+        assert!(xml.contains("&quot;&lt;b&gt;&quot;"), "{xml}");
+        assert!(xml.contains("&apos;x&apos; &amp; \u{fffd}[31m&#10;next"), "{xml}");
+        assert!(!xml.chars().any(|c| c.is_control() && c != '\n'), "only line breaks between elements: {xml:?}");
+        // Every opened element is closed.
+        for (open, close) in [
+            ("<testsuites>", "</testsuites>"),
+            ("<testsuite ", "</testsuite>"),
+            ("<testcase ", "</testcase>"),
+            ("<failure ", "</failure>"),
+            ("<error ", "</error>"),
+        ] {
+            assert_eq!(xml.matches(open).count(), xml.matches(close).count(), "{open}");
+        }
+    }
 }

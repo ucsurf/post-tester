@@ -1,12 +1,34 @@
 //! Terminal colors, switched off when output is piped or `NO_COLOR` is set.
+//! stdout and stderr are checked separately, so `pt run > out.txt` keeps
+//! colored warnings in the terminal and plain text in the file.
 
 use owo_colors::OwoColorize;
 use std::io::IsTerminal;
 use std::sync::OnceLock;
 
+/// `NO_COLOR` set to anything but an empty string turns colors off (see no-color.org).
+fn no_color() -> bool {
+    std::env::var_os("NO_COLOR").is_some_and(|v| !v.is_empty())
+}
+
 fn enabled() -> bool {
     static ENABLED: OnceLock<bool> = OnceLock::new();
-    *ENABLED.get_or_init(|| std::env::var_os("NO_COLOR").is_none() && std::io::stdout().is_terminal())
+    *ENABLED.get_or_init(|| !no_color() && std::io::stdout().is_terminal())
+}
+
+fn stderr_enabled() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| !no_color() && std::io::stderr().is_terminal())
+}
+
+/// `error:` for messages on stderr.
+pub fn error_label() -> String {
+    if stderr_enabled() { "error:".red().to_string() } else { "error:".to_string() }
+}
+
+/// `warning:` for messages on stderr.
+pub fn warning_label() -> String {
+    if stderr_enabled() { "warning:".yellow().to_string() } else { "warning:".to_string() }
 }
 
 macro_rules! color_fn {

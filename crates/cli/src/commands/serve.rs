@@ -8,12 +8,36 @@ use post_tester_server::{ServerConfig, serve as start_server};
 use std::net::IpAddr;
 use std::path::Path;
 use std::process::ExitCode;
+use std::time::Duration;
+
+/// How long requests in flight may take to finish after Ctrl+C.
+const SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
+
+/// Waits for Ctrl+C, or for the server to stop by itself (an error).
+async fn wait_for_ctrl_c(task: &mut tokio::task::JoinHandle<std::io::Result<()>>) -> Result<bool> {
+    tokio::select! {
+        result = task => { result??; Ok(false) }
+        signal = tokio::signal::ctrl_c() => { signal?; Ok(true) }
+    }
+}
+
+/// Runs `shutdown`, unless Ctrl+C is pressed again to stop right away.
+async fn stop_gracefully(shutdown: impl std::future::Future<Output = std::io::Result<()>>) -> Result<()> {
+    println!("\nStopping (press Ctrl+C again to stop now)…");
+    tokio::select! {
+        result = shutdown => result?,
+        _ = tokio::signal::ctrl_c() => {}
+    }
+    println!("Stopped.");
+    Ok(())
+}
 
 #[derive(Debug, Args)]
 pub struct ServeArgs {
     #[arg(long, default_value_t = 7777)]
     port: u16,
-    /// Address to listen on. Anything other than 127.0.0.1 exposes post-tester to your network.
+    /// Address to listen on. 0.0.0.0 (every interface) or a network address exposes
+    /// post-tester to your network; other devices then open it by IP address.
     #[arg(long, default_value = "127.0.0.1")]
     host: IpAddr,
     /// Don't open the browser.
@@ -31,7 +55,7 @@ pub async fn serve(workspace: Option<&Path>, args: ServeArgs) -> Result<ExitCode
         ctx.engine.workspace().and_then(|ws| ws.local_dir().ok()).map(|dir| post_tester_core::history::follow(ctx.engine.bus(), &dir));
     let mcp = post_tester_mcp::ServerOptions { read_only: args.read_only };
     let config = ServerConfig { host: args.host, port: args.port, token: None, mcp };
-    let server = start_server(config, ctx.engine.clone(), ctx.plugins.clone()).await?;
+    let mut server = start_server(config, ctx.engine.clone(), ctx.plugins.clone()).await?;
 
     let workspace_line = match ctx.engine.workspace() {
         Some(ws) => ws.root().display().to_string(),
@@ -42,11 +66,14 @@ pub async fn serve(workspace: Option<&Path>, args: ServeArgs) -> Result<ExitCode
     println!();
     println!("  Workspace  {workspace_line}");
     println!("  Open       {}", style::cyan(&server.url));
-    println!("  MCP        http://127.0.0.1:{}/mcp  (header: Authorization: Bearer {})", server.addr.port(), server.token);
+    println!("  MCP        {}/mcp  (header: Authorization: Bearer {})", server.base_url, server.token);
     println!("             or over stdio: claude mcp add post-tester -- pt mcp");
     if !args.host.is_loopback() {
+        let address = if args.host.is_unspecified() { "<this computer's IP address>".to_string() } else { args.host.to_string() };
         println!();
         println!("  {} listening on {} — anyone on your network with the token can use it", style::yellow("warning:"), args.host);
+        println!("  From another device, open http://{address}:{}/?token={}", server.addr.port(), server.token);
+        println!("  (by IP address: other host names are rejected to block DNS rebinding)");
     }
     println!();
     println!("  Press Ctrl+C to stop.");
@@ -54,9 +81,8 @@ pub async fn serve(workspace: Option<&Path>, args: ServeArgs) -> Result<ExitCode
         println!("  (Could not open a browser; copy the link above.)");
     }
 
-    tokio::select! {
-        result = server.task => { result??; }
-        _ = tokio::signal::ctrl_c() => println!("\nStopped."),
+    if wait_for_ctrl_c(&mut server.task).await? {
+        stop_gracefully(server.shutdown(SHUTDOWN_GRACE)).await?;
     }
     Ok(ExitCode::SUCCESS)
 }
@@ -75,12 +101,18 @@ pub struct MockArgs {
 
 pub async fn mock(workspace: Option<&Path>, args: MockArgs) -> Result<ExitCode> {
     let ctx = Context::open(workspace, true).await?;
-    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], args.port));
-    let printer = crate::printer::LivePrinter::start(ctx.engine.bus(), crate::printer::PrintOptions::default());
-    let running = post_tester_server::mock::start(ctx.engine.clone(), &args.folder, args.environment, addr).await?;
-    if running.routes.is_empty() {
+    if post_tester_server::mock::routes(&ctx.workspace()?, &args.folder)?.is_empty() {
         anyhow::bail!("no request in this folder has examples. Add `examples:` to a request file (see guide/cli.md)");
     }
+    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], args.port));
+    let mut running =
+        post_tester_server::mock::start(ctx.engine.clone(), &args.folder, args.environment, addr).await.map_err(|e| match e {
+            post_tester_core::Error::Io(io) if io.kind() == std::io::ErrorKind::AddrInUse => {
+                anyhow::anyhow!("port {} is already in use. Stop the other program or choose another port with --port", args.port)
+            }
+            other => other.into(),
+        })?;
+    let printer = crate::printer::LivePrinter::start(ctx.engine.bus(), crate::printer::PrintOptions::default());
     println!();
     println!("  {} on http://{}", style::bold("Mock API"), running.addr);
     println!();
@@ -91,9 +123,8 @@ pub async fn mock(workspace: Option<&Path>, args: MockArgs) -> Result<ExitCode> 
     println!();
     println!("  Pick an example with the header `{}: <name>`. Press Ctrl+C to stop.", post_tester_server::mock::EXAMPLE_HEADER);
     println!();
-    tokio::select! {
-        result = running.task => { result??; }
-        _ = tokio::signal::ctrl_c() => println!("\nStopped."),
+    if wait_for_ctrl_c(&mut running.task).await? {
+        stop_gracefully(running.shutdown(SHUTDOWN_GRACE)).await?;
     }
     printer.finish().await;
     Ok(ExitCode::SUCCESS)

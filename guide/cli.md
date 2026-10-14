@@ -35,9 +35,11 @@ Commands find the workspace in the current folder or its parents. Use
 | Command | What it does |
 |---|---|
 | `pt send <id\|url>` | Send a saved request (e.g. `auth/login`) or a URL |
-| `pt load <id\|url> -c 10 -n 500` | Send a request 500 times, 10 at a time, and report latency percentiles |
+| `pt load <id\|url> -c 10 -n 500` | Send a request 500 times, 10 at a time, and report latency percentiles. Connections are kept open and reused; add `--fresh-connections` to open a new one (DNS, TCP, TLS) for every request |
 | `pt codegen <id\|url> -t python-requests` | Print code that sends the request (`curl`, `javascript-fetch`, `python-requests`, or a plugin's `plugin/name`) |
 
+A URL may leave out the scheme (`pt send localhost:3000/users` uses `http://`)
+or start with a variable (`pt send '{{baseUrl}}/users'`).
 Options for a URL: `-X METHOD`, `-H 'Name: value'` (repeatable), `-d BODY`
 (JSON bodies get `Content-Type: application/json`). Common options:
 `-e <environment>`, `-v` (show headers), `--json` (machine-readable result),
@@ -57,8 +59,10 @@ pt run --reporter json > results.json
 Requests run in file-name order (prefix files with `01-`, `02-` to control it).
 Variables extracted by one request (`extract:`) are available to the next.
 
-**Exit codes:** `0` everything passed · `1` a test failed or a request failed ·
-`2` a usage or setup error.
+**Exit codes** (for every command): `0` everything passed · `1` a test failed or
+a request failed · `2` a usage or setup error. With `--json` or
+`--reporter json`, stdout holds only the JSON document; warnings go to stderr.
+JUnit reports list one test case per request, with the failed tests in `<failure>`.
 
 **Secrets in CI:** set `PT_SECRET_<NAME>` environment variables, e.g.
 `PT_SECRET_API_KEY` for `{{secret:api-key}}`. They take precedence over the keychain.
@@ -90,6 +94,16 @@ Path segments written as `{{name}}` or `:name` match anything and can be used
 in the example body. In the app, **Save as example** on a response adds it to
 the request. Every mock hit appears in Live Activity.
 
+- Query strings are ignored when matching. When several paths match, the more
+  specific one wins: `/users/me` before `/users/{{id}}`.
+- `HEAD` requests are answered by `GET` examples, without a body.
+- Responses allow cross-origin requests (CORS), and `OPTIONS` preflight
+  requests are answered, so a front-end running in a browser can use the mock.
+- An unknown `X-Mock-Example` name returns `404` with the list of examples.
+- Example bodies may use variables and values such as `{{$uuid}}`, but never
+  secrets. Request bodies are limited to 16 MB.
+- Examples are read when `pt mock` starts; restart it after editing them.
+
 ## Secrets
 
 ```bash
@@ -105,7 +119,7 @@ shown as `•••` in previews and generated code.
 
 | Command | What it does |
 |---|---|
-| `pt serve [--port 7777] [--no-open] [--read-only]` | Start the local server and open the app in your browser |
+| `pt serve [--port 7777] [--host 127.0.0.1] [--no-open] [--read-only]` | Start the local server and open the app in your browser |
 | `pt mock [folder] [--port 4010]` | Serve saved example responses as a mock API |
 | `pt mcp [--read-only]` | Serve MCP over stdio for AI agents (see [mcp.md](mcp.md)) |
 
@@ -113,9 +127,19 @@ While the app is open, everything started from a terminal (`pt send`, `pt run`,
 `pt mock`) or by an AI agent over `pt mcp` in the same workspace also appears
 in its Live Activity, as it happens.
 
-`pt serve` prints a link that contains a session token. The server only
-listens on `127.0.0.1` and rejects requests without the token or from other
-websites.
+`pt serve` prints a link that contains a session token. The server listens on
+`127.0.0.1` and rejects requests without the token or from other websites.
+
+To use the app from another device, listen on your network with
+`--host 0.0.0.0` (or one of this computer's addresses) and open
+`http://<this computer's IP address>:7777/?token=…` there. Anyone on the
+network who has the token can then use post-tester, including sending
+requests from your computer. Only IP addresses and `localhost` are accepted in
+the address; other host names are rejected to block DNS rebinding.
+
+`pt serve` and `pt mock` stop on Ctrl+C: they stop accepting connections and
+give requests in flight up to 5 seconds to finish. Press Ctrl+C again to stop
+at once.
 
 ## Plugins
 

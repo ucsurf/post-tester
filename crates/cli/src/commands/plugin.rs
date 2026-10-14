@@ -130,8 +130,8 @@ async fn install(workspace: Option<&Path>, dir: &Path, yes: bool) -> Result<Exit
         bail!("the plugin has problems; fix them and run `pt plugin install` again");
     }
     let manifest = Manifest::load(dir).map_err(|p| anyhow::anyhow!("{p}"))?;
-    let dir = dir.canonicalize()?;
-    let stored = pathdiff(&dir, ws.root()).unwrap_or_else(|| dir.to_string_lossy().into_owned());
+    let dir = dir.canonicalize().with_context(|| format!("cannot open {}", dir.display()))?;
+    let stored = pathdiff(&dir, ws.root()).unwrap_or_else(|| plain_path(&dir));
 
     let mut settings = ws.settings()?;
     if !settings.plugins.contains(&stored) {
@@ -175,10 +175,23 @@ fn ask_permissions(manifest: &Manifest, yes: bool) -> Result<bool> {
     Ok(matches!(answer.trim(), "y" | "Y" | "yes"))
 }
 
-/// `dir` relative to `base`, when `dir` is inside `base`.
+/// `dir` relative to `base`, when `dir` is inside `base`, with `/` separators
+/// so the workspace file works on every system.
 fn pathdiff(dir: &Path, base: &Path) -> Option<String> {
     let base = base.canonicalize().ok()?;
-    dir.strip_prefix(&base).ok().map(|p| p.to_string_lossy().replace('\\', "/"))
+    let relative = dir.strip_prefix(&base).ok()?;
+    let parts: Vec<String> = relative.components().map(|c| c.as_os_str().to_string_lossy().into_owned()).collect();
+    Some(if parts.is_empty() { ".".to_string() } else { parts.join("/") })
+}
+
+/// An absolute path as people write it: on Windows, `canonicalize` returns
+/// `\\?\C:\…`, which other programs and people do not expect.
+fn plain_path(dir: &Path) -> String {
+    let text = dir.to_string_lossy();
+    match text.strip_prefix(r"\\?\") {
+        Some(rest) if !rest.starts_with("UNC\\") => rest.to_string(),
+        _ => text.into_owned(),
+    }
 }
 
 /// Finds the settings entry and manifest of an installed plugin by name.
@@ -236,4 +249,28 @@ async fn list(workspace: Option<&Path>) -> Result<ExitCode> {
         }
     }
     Ok(ExitCode::SUCCESS)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn installed_paths_are_relative_with_forward_slashes() {
+        let root = tempfile::tempdir().unwrap();
+        let plugin = root.path().join("plugins").join("my-plugin");
+        std::fs::create_dir_all(&plugin).unwrap();
+        let plugin = plugin.canonicalize().unwrap();
+        assert_eq!(pathdiff(&plugin, root.path()).as_deref(), Some("plugins/my-plugin"));
+        assert_eq!(pathdiff(&root.path().canonicalize().unwrap(), root.path()).as_deref(), Some("."));
+        let elsewhere = tempfile::tempdir().unwrap();
+        assert_eq!(pathdiff(&elsewhere.path().canonicalize().unwrap(), root.path()), None);
+    }
+
+    #[test]
+    fn verbatim_windows_prefixes_are_removed() {
+        assert_eq!(plain_path(Path::new(r"\\?\C:\plugins\x")), r"C:\plugins\x");
+        assert_eq!(plain_path(Path::new(r"\\?\UNC\server\share")), r"\\?\UNC\server\share");
+        assert_eq!(plain_path(Path::new("/home/me/x")), "/home/me/x");
+    }
 }

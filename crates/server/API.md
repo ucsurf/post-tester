@@ -8,12 +8,20 @@ All TypeScript types referenced below are generated from Rust into
 
 ## Security
 
-- The server listens on `127.0.0.1` only (unless `--host` is given).
-- Every request needs the session token printed at startup:
+- The server listens on `127.0.0.1` only, unless `pt serve --host` is given.
+- Every `/api` and `/mcp` request needs the session token printed at startup:
   - HTTP: header `Authorization: Bearer <token>`, or query `?token=<token>`
-  - WebSocket: query `?token=<token>`
-- The `Host` header must be `127.0.0.1:<port>`, `localhost:<port>` or `[::1]:<port>`
-  (blocks DNS rebinding). If an `Origin` header is present it must be one of the same.
+  - WebSocket: query `?token=<token>` (browsers cannot set headers on WebSockets)
+- The `Host` header must name this server (blocks DNS rebinding):
+  `localhost:<port>` or a loopback address such as `127.0.0.1:<port>` / `[::1]:<port>`.
+  With `--host <address>`, that address is accepted too; with `--host 0.0.0.0` (or `::`),
+  any IP address is. Host names other than `localhost` are always rejected.
+- If an `Origin` header is present it must be `http://` plus an accepted host. There is
+  no CORS: pages on other origins can neither call the API nor read its responses.
+- `/mcp` follows exactly the same rules.
+- Every response carries `Referrer-Policy: no-referrer`, `X-Content-Type-Options: nosniff`
+  and `X-Frame-Options: DENY`. Blobs (`/api/blobs/{id}`) are served with
+  `Content-Security-Policy: sandbox`, so a tested HTML body never runs on this origin.
 - The UI is opened as `http://127.0.0.1:<port>/?token=<token>`; it reads the token
   from the URL, keeps it in `sessionStorage`, and removes it from the address bar.
 
@@ -21,7 +29,12 @@ All TypeScript types referenced below are generated from Rust into
 
 - JSON in, JSON out. Field names are exactly as in the generated types.
 - Errors: HTTP 4xx/5xx with body `{ "error": "message that explains how to fix it" }`.
+  This includes malformed JSON bodies (`400`/`422`), unknown `/api/…` paths (`404`),
+  wrong methods (`405`) and bodies that are too large (`413`).
+- Request bodies are limited to 32 MB (128 MB for `/api/import`).
 - `{*id}` path parameters are request/folder ids such as `auth/login` (they contain `/`).
+  Encode each segment (`encodeURIComponent`). Ids that could leave the workspace
+  (`..`, absolute paths, `\`, hidden segments) are rejected with `400`.
 
 ## Endpoints
 
@@ -51,7 +64,7 @@ type Info = {
   environments: string[];
   defaultEnvironment: string | null;
   secretStore: string;          // e.g. "OS keychain"
-  mcpUrl: string;               // e.g. "http://127.0.0.1:7777/mcp"
+  mcpUrl: string;               // e.g. "http://127.0.0.1:7777/mcp", using the host the caller used
 };
 ```
 
@@ -95,7 +108,10 @@ type RunBody = {
 };
 // RunReport: { span_id, name, outcome, items: RunItem[], duration_ms }  (snake_case, from Rust)
 
-type LoadBody = { request: Request; requestId?: string; environment?: string | null; concurrency: number; requests: number };
+type LoadBody = {
+  request: Request; requestId?: string; environment?: string | null; concurrency: number; requests: number;
+  connections?: "reuse" | "fresh";   // default "reuse"; "fresh" opens a new connection per request
+};
 // LoadReport: { span_id, requests, succeeded, failed, duration_ms, requests_per_second, min_ms, mean_ms, p50_ms, p90_ms, p99_ms, max_ms, status_codes }
 ```
 
@@ -103,9 +119,14 @@ type LoadBody = { request: Request; requestId?: string; environment?: string | n
 
 | Method | Path | Response |
 |---|---|---|
-| WS | `/api/live?token=…` | Server sends JSON **arrays** of `Event` (batched about every 50 ms). The first message contains the recent history. |
-| GET | `/api/events?since=<seq>` | `Event[]` newer than `seq` |
+| WS | `/api/live?token=…` | Server sends JSON **arrays** of `Event` (batched about every 50 ms, at most 1000 per message). The first messages contain the recent history (up to 5000 events, `[]` when there is none). |
+| GET | `/api/events?since=<seq>` | `Event[]` newer than `seq`, from the in-memory history |
 | GET | `/api/blobs/{blobId}` | Raw bytes with the original `Content-Type` (404 if evicted) |
+
+A client that reads too slowly to keep up is sent the events it missed again,
+from history. Clients should therefore ignore events whose `seq` they already
+have. Events are not guaranteed to arrive in `seq` order across messages; sort
+by `seq` when order matters. When the server stops, it closes the stream.
 
 ### Code, import, plugins
 
@@ -171,3 +192,4 @@ type SessionInfo = {
 
 `/mcp` is a Streamable HTTP MCP endpoint. Agents send the token as
 `Authorization: Bearer <token>`. The same server is available over stdio with `pt mcp`.
+MCP sessions end when the server stops.

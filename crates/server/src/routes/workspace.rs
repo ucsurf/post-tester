@@ -4,7 +4,7 @@ use crate::error::{ApiError, ApiResult};
 use crate::state::AppState;
 use axum::Json;
 use axum::extract::{Path, Query, State};
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode, header};
 use post_tester_core::Workspace;
 use post_tester_core::model::{Environment, FolderSettings, Request};
 use post_tester_core::workspace::Folder;
@@ -32,8 +32,12 @@ pub struct Info {
     mcp_url: String,
 }
 
-pub async fn info(State(state): State<AppState>) -> ApiResult<Json<Info>> {
+pub async fn info(State(state): State<AppState>, headers: HeaderMap) -> ApiResult<Json<Info>> {
     let ws = state.engine.workspace();
+    // The address the caller used (checked by the guard), so the MCP URL also
+    // works from another machine when the server listens on the network.
+    let base_url =
+        headers.get(header::HOST).and_then(|h| h.to_str().ok()).map_or_else(|| state.base_url.clone(), |h| format!("http://{h}"));
     let settings = ws.as_ref().map(Workspace::settings).transpose()?;
     Ok(Json(Info {
         version: post_tester_core::VERSION,
@@ -44,7 +48,7 @@ pub async fn info(State(state): State<AppState>) -> ApiResult<Json<Info>> {
         environments: ws.as_ref().map(Workspace::environments).transpose()?.unwrap_or_default(),
         default_environment: settings.and_then(|s| s.default_environment),
         secret_store: state.engine.secrets().name().to_string(),
-        mcp_url: format!("{}/mcp", state.base_url),
+        mcp_url: format!("{base_url}/mcp"),
     }))
 }
 

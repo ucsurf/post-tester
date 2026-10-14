@@ -16,33 +16,48 @@ use tokio::sync::broadcast::error::RecvError;
 
 /// How long events are collected before being sent as one batch.
 const BATCH_WINDOW: Duration = Duration::from_millis(50);
-/// Most events in one batch.
+/// Most events in one message (history is split into messages of this size too).
 const BATCH_MAX: usize = 1_000;
 /// History sent when a client connects.
 const INITIAL_HISTORY: usize = 5_000;
+/// A client that does not accept a message within this time is disconnected.
+const SEND_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub async fn live(State(state): State<AppState>, upgrade: WebSocketUpgrade) -> Response {
     upgrade.on_upgrade(move |socket| stream(state, socket))
 }
 
-/// Sends history first, then new events in small batches until the client leaves.
+/// Sends history first, then new events in small batches until the client
+/// leaves or the server stops. Each client has its own receiver, so a slow
+/// client only delays itself.
 async fn stream(state: AppState, mut socket: WebSocket) {
+    let bus = state.engine.bus();
     // Subscribe before reading history so nothing is missed in between.
-    let mut receiver = state.engine.bus().subscribe();
-    let history = state.engine.bus().recent();
-    let last_seq = history.last().map_or(0, |e| e.seq);
-    let start = history.len().saturating_sub(INITIAL_HISTORY);
-    if send_batch(&mut socket, &history[start..]).await.is_err() {
+    let mut receiver = bus.subscribe();
+    let history = bus.recent_last(INITIAL_HISTORY);
+    // Events up to `floor` were in a history snapshot sent to this client
+    // (snapshots hold every event up to their newest), so the copies that
+    // also arrive through the channel are skipped.
+    let mut floor = history.last().map_or(0, |e| e.seq);
+    let mut newest_sent = floor;
+    // The first message is the history, even when there is none yet (`[]`).
+    let sent = if history.is_empty() { send(&mut socket, "[]".to_string()).await } else { send_chunked(&mut socket, &history).await };
+    if sent.is_err() {
         return;
     }
 
     loop {
         let mut batch: Vec<Arc<Event>> = Vec::new();
-        // Wait for the first event (or the client closing).
+        let mut lagged = false;
+        // Wait for the first event, the client closing, or the server stopping.
         tokio::select! {
+            () = state.shutdown.cancelled() => {
+                let _ = tokio::time::timeout(Duration::from_secs(1), socket.send(Message::Close(None))).await;
+                return;
+            }
             received = receiver.recv() => match received {
                 Ok(event) => batch.push(event),
-                Err(RecvError::Lagged(_)) => continue,
+                Err(RecvError::Lagged(_)) => lagged = true,
                 Err(RecvError::Closed) => return,
             },
             message = socket.recv() => match message {
@@ -52,23 +67,44 @@ async fn stream(state: AppState, mut socket: WebSocket) {
         }
         // Then collect whatever else arrives within the batch window.
         let deadline = tokio::time::Instant::now() + BATCH_WINDOW;
-        while batch.len() < BATCH_MAX {
+        while !lagged && batch.len() < BATCH_MAX {
             match tokio::time::timeout_at(deadline, receiver.recv()).await {
                 Ok(Ok(event)) => batch.push(event),
-                Ok(Err(RecvError::Lagged(_))) => continue,
+                Ok(Err(RecvError::Lagged(_))) => lagged = true,
                 Ok(Err(RecvError::Closed)) | Err(_) => break,
             }
         }
-        batch.retain(|e| e.seq > last_seq);
-        if !batch.is_empty() && send_batch(&mut socket, &batch).await.is_err() {
+        if lagged {
+            // The client fell so far behind that the channel dropped events for
+            // it. Send what it missed from history instead; clients ignore
+            // events whose `seq` they already have.
+            let missed = bus.recent_since(newest_sent);
+            floor = missed.last().map_or(newest_sent, |e| e.seq).max(floor);
+            batch.retain(|e| e.seq > floor);
+            batch.splice(0..0, missed);
+        } else {
+            batch.retain(|e| e.seq > floor);
+        }
+        newest_sent = batch.iter().map(|e| e.seq).fold(newest_sent, u64::max);
+        if send_chunked(&mut socket, &batch).await.is_err() {
             return;
         }
     }
 }
 
-async fn send_batch(socket: &mut WebSocket, events: &[Arc<Event>]) -> Result<(), axum::Error> {
-    let json = serde_json::to_string(events).expect("events always serialize");
-    socket.send(Message::Text(json.into())).await
+/// Sends events as JSON arrays of at most [`BATCH_MAX`] events each.
+async fn send_chunked(socket: &mut WebSocket, events: &[Arc<Event>]) -> Result<(), ()> {
+    for chunk in events.chunks(BATCH_MAX) {
+        send(socket, serde_json::to_string(chunk).expect("events always serialize")).await?;
+    }
+    Ok(())
+}
+
+async fn send(socket: &mut WebSocket, json: String) -> Result<(), ()> {
+    match tokio::time::timeout(SEND_TIMEOUT, socket.send(Message::Text(json.into()))).await {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(_)) | Err(_) => Err(()),
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -78,7 +114,7 @@ pub struct EventsQuery {
 }
 
 pub async fn events(State(state): State<AppState>, Query(q): Query<EventsQuery>) -> Json<Vec<Arc<Event>>> {
-    Json(state.engine.bus().recent().into_iter().filter(|e| e.seq > q.since).collect())
+    Json(state.engine.bus().recent_since(q.since))
 }
 
 pub async fn blob(State(state): State<AppState>, Path(id): Path<String>) -> ApiResult<Response> {
@@ -90,5 +126,8 @@ pub async fn blob(State(state): State<AppState>, Path(id): Path<String>) -> ApiR
         .get(id)
         .ok_or_else(|| ApiError::not_found("this payload is no longer in memory; send the request again to see it"))?;
     let content_type = blob.content_type.unwrap_or_else(|| "application/octet-stream".into());
-    Ok(([(header::CONTENT_TYPE, content_type)], Body::from(blob.data)).into_response())
+    // Bodies come from any server the user tested. Should one be opened directly
+    // in a browser, the sandbox keeps an HTML body from running scripts on this origin.
+    let headers = [(header::CONTENT_TYPE, content_type), (header::CONTENT_SECURITY_POLICY, "sandbox".to_string())];
+    Ok((headers, Body::from(blob.data)).into_response())
 }

@@ -41,9 +41,11 @@ impl LivePrinter {
                 match receiver.recv().await {
                     Ok(event) => {
                         state.print(&event, options);
-                        progress.store(event.seq, Ordering::Release);
+                        // Events can arrive slightly out of order: never move backwards,
+                        // or `finish` would wait for its timeout.
+                        progress.fetch_max(event.seq, Ordering::AcqRel);
                     }
-                    Err(RecvError::Lagged(skipped)) => eprintln!("{}", style::dimmed(format!("… {skipped} events skipped"))),
+                    Err(RecvError::Lagged(skipped)) => eprintln!("… {skipped} events were not shown (too many at once)"),
                     Err(RecvError::Closed) => return,
                 }
             }
@@ -156,12 +158,17 @@ impl State {
             EventKind::VariableSet { name, value } => println!("{pad}  {} {name} = {}", style::dimmed("="), one_line(value, 60)),
             EventKind::Progress { .. } | EventKind::Connected { .. } => {}
             EventKind::Finished { outcome, duration_ms, error, .. } => {
+                // Long-running commands (`pt mock`) see many spans: forget finished ones.
+                self.depth.remove(&id);
+                self.phases.remove(&id);
+                self.url_shown.remove(&id);
+                let error_shown = self.error_shown.remove(&id);
                 let kind = self.kinds.remove(&id);
                 if kind == Some(SpanKind::System) {
                     return;
                 }
                 match (outcome, error) {
-                    (Outcome::Error, Some(error)) if !self.error_shown.remove(&id) => {
+                    (Outcome::Error, Some(error)) if !error_shown => {
                         println!("{pad}{} {}", style::red("✗"), style::red(error));
                     }
                     (Outcome::Failed, Some(reason)) => println!("{pad}{} {}", style::yellow("✗"), style::yellow(reason)),

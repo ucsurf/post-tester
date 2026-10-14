@@ -13,6 +13,9 @@ struct Ui;
 /// Serves a UI file, falling back to `index.html` so client-side routes work.
 pub async fn serve(uri: Uri) -> Response {
     let path = uri.path().trim_start_matches('/');
+    if path == "api" || path.starts_with("api/") {
+        return crate::error::ApiError::not_found(format!("no API endpoint `/{path}`; see API.md for the list")).into_response();
+    }
     let path = if path.is_empty() { "index.html" } else { path };
     if let Some(file) = Ui::get(path) {
         let mime = mime_guess::from_path(path).first_or_octet_stream();

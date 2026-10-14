@@ -89,12 +89,18 @@ pub struct ExportArgs {
 pub async fn export(workspace: Option<&Path>, args: ExportArgs) -> Result<ExitCode> {
     let ctx = Context::open(workspace, true).await?;
     let ws = ctx.workspace()?;
+    let exporters: Vec<String> = ctx.plugins.export_targets().into_iter().map(|(id, _)| id).collect();
+    if exporters.is_empty() {
+        bail!(
+            "no exporter plugins are installed. Create one with `pt plugin new exporter <name>`, then add it with `pt plugin install <dir>`"
+        );
+    }
+    if !exporters.contains(&args.exporter) {
+        bail!("unknown exporter `{}`. Installed exporters: {}", args.exporter, exporters.join(", "));
+    }
     let tree = ws.tree()?;
     let Some(folder) = tree.find(&args.folder) else { bail!("folder `{}` does not exist", args.folder) };
     let requests = folder.request_ids().into_iter().map(|id| ws.read_request(&id).map(|r| (id, r))).collect::<Result<Vec<_>, _>>()?;
-    if ctx.plugins.export_targets().is_empty() {
-        bail!("no exporter plugins are installed. Try `pt plugin install examples/plugins/markdown-exporter`");
-    }
     let content = ctx.plugins.export(&args.exporter, &folder.name, &requests).await?;
     match args.output {
         Some(path) => {

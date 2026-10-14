@@ -30,6 +30,9 @@ workspace folder, and `--read-only` to stop the agent from changing files.
 - URL: `http://127.0.0.1:7777/mcp`
 - Header: `Authorization: Bearer <token>`, using the token from the link `pt serve` prints
 
+If the agent runs on another device and the app listens on your network
+(`pt serve --host 0.0.0.0`), use `http://<this computer's IP address>:7777/mcp`.
+
 ## Tools for agents
 
 | Tool | What it does |

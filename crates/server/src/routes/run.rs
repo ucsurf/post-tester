@@ -7,7 +7,7 @@ use axum::Json;
 use axum::extract::{Path, State};
 use post_tester_core::SendOptions;
 use post_tester_core::events::{Source, SpanId};
-use post_tester_core::loadtest::{LoadOptions, LoadReport};
+use post_tester_core::loadtest::{Connections, LoadOptions, LoadReport};
 use post_tester_core::model::Request;
 use post_tester_core::runner::{RunOptions, RunReport, RunTarget};
 use serde::{Deserialize, Serialize};
@@ -81,12 +81,28 @@ pub struct LoadBody {
     environment: Option<String>,
     concurrency: u32,
     requests: u32,
+    #[serde(default)]
+    connections: ConnectionsBody,
+}
+
+/// `"reuse"` (default): keep connections open, like a real client.
+/// `"fresh"`: a new connection for every request, to measure connection setup too.
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ConnectionsBody {
+    #[default]
+    Reuse,
+    Fresh,
 }
 
 pub async fn load_test(State(state): State<AppState>, Json(body): Json<LoadBody>) -> ApiResult<Json<LoadReport>> {
     let options =
         LoadOptions { source: Source::User, environment: body.environment, concurrency: body.concurrency, requests: body.requests };
-    Ok(Json(state.engine.load_test(&body.request, body.request_id, options).await?))
+    let connections = match body.connections {
+        ConnectionsBody::Reuse => Connections::Reuse,
+        ConnectionsBody::Fresh => Connections::Fresh,
+    };
+    Ok(Json(state.engine.load_test_with(&body.request, body.request_id, options, connections).await?))
 }
 
 #[derive(Debug, Serialize)]

@@ -151,7 +151,8 @@ function DrawerHeader({ span }: { span: SpanState }) {
         {span.size !== null && <span className="mono">{formatSize(span.size)}</span>}
         {span.startedAt > 0 && <span className="mono faint">{formatClock(span.startedAt)}</span>}
       </div>
-      {span.summary.url && <div className="mono truncate faint">{span.summary.url}</div>}
+      {/* The URL as sent (variables resolved) once known; the saved template until then. */}
+      {(span.request?.url ?? span.summary.url) && <div className="mono truncate faint">{span.request?.url ?? span.summary.url}</div>}
       {span.error && <div className="error-box">{span.error}</div>}
     </header>
   );

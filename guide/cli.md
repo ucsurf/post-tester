@@ -25,6 +25,7 @@ $ pt send examples/get-ip
 | `pt env list` | List environments (the default is marked) |
 | `pt env show <name>` | Show an environment's variables |
 | `pt import <file\|-> [--into folder]` | Import a cURL command, Postman collection, OpenAPI 3 document, or a format provided by a plugin |
+| `pt export [folder] --to <plugin>/<exporter> [-o file]` | Export requests with an exporter plugin (e.g. Markdown documentation) |
 
 Commands find the workspace in the current folder or its parents. Use
 `--workspace <dir>` (or `PT_WORKSPACE`) to point somewhere else.
@@ -62,6 +63,33 @@ Variables extracted by one request (`extract:`) are available to the next.
 **Secrets in CI:** set `PT_SECRET_<NAME>` environment variables, e.g.
 `PT_SECRET_API_KEY` for `{{secret:api-key}}`. They take precedence over the keychain.
 
+## Mock API
+
+Add example responses to a request, then serve them:
+
+```yaml
+name: Get user
+url: "{{baseUrl}}/users/{{id}}"
+examples:
+  - name: found
+    body: '{"id": "{{id}}", "name": "Ada"}'
+  - name: missing
+    status: 404
+    body: '{"error": "not found"}'
+    delay_ms: 300
+```
+
+```bash
+pt mock                       # every request with examples, on http://127.0.0.1:4010
+pt mock users --port 5000     # only the users folder
+curl localhost:4010/users/42                              # → the first example
+curl -H 'X-Mock-Example: missing' localhost:4010/users/42 # → a specific example
+```
+
+Path segments written as `{{name}}` or `:name` match anything and can be used
+in the example body. In the app, **Save as example** on a response adds it to
+the request. Every mock hit appears in Live Activity.
+
 ## Secrets
 
 ```bash
@@ -78,7 +106,12 @@ shown as `•••` in previews and generated code.
 | Command | What it does |
 |---|---|
 | `pt serve [--port 7777] [--no-open] [--read-only]` | Start the local server and open the app in your browser |
+| `pt mock [folder] [--port 4010]` | Serve saved example responses as a mock API |
 | `pt mcp [--read-only]` | Serve MCP over stdio for AI agents (see [mcp.md](mcp.md)) |
+
+While the app is open, everything started from a terminal (`pt send`, `pt run`,
+`pt mock`) or by an AI agent over `pt mcp` in the same workspace also appears
+in its Live Activity, as it happens.
 
 `pt serve` prints a link that contains a session token. The server only
 listens on `127.0.0.1` and rejects requests without the token or from other

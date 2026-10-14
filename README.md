@@ -26,6 +26,11 @@
 
 </div>
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/screenshot-dark.png">
+  <img src="assets/screenshot-light.png" alt="post-tester: a request with its response, and Live Activity showing an AI agent, the user and a collection run started from the terminal">
+</picture>
+
 ---
 
 > [!WARNING]
@@ -105,7 +110,8 @@ pt serve                        # open the app in your browser
 - **Collection runner** for the app, the terminal and CI (JSON and JUnit reports)
 - **Load testing** from any request, with p50/p90/p99 latency
 - **Import** cURL, Postman collections and OpenAPI 3; **code generation** for cURL, JavaScript and Python
-- *Planned:* mock server, response diff, visual flows
+- **Mock API** from saved example responses (`pt mock`)
+- *Planned:* response diff, visual flows
 
 ## 📡 Live Activity
 

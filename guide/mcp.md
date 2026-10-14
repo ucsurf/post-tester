@@ -21,7 +21,8 @@ claude mcp add post-tester -- pt mcp
 ```
 
 For other agents, configure a stdio server with the command `pt` and the
-argument `mcp`. Add `--workspace <dir>` if the agent does not start in your
+argument `mcp`. If the app is open on the same workspace, the agent's work
+appears in it live. Add `--workspace <dir>` if the agent does not start in your
 workspace folder, and `--read-only` to stop the agent from changing files.
 
 **Over HTTP**, while the app is running (`pt serve` or the desktop app):

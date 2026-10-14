@@ -255,11 +255,7 @@ pub struct TlsInfo {
 #[ts(export)]
 pub enum EventKind {
     /// A span began.
-    Started {
-        kind: SpanKind,
-        title: String,
-        summary: Summary,
-    },
+    Started { kind: SpanKind, title: String, summary: Summary },
     /// A connection phase finished.
     Phase { phase: Phase, duration_ms: f64 },
     /// The connection was established.
@@ -270,21 +266,9 @@ pub enum EventKind {
         tls: Option<TlsInfo>,
     },
     /// The exact request that was sent (after variables, auth and hooks).
-    RequestSent {
-        method: String,
-        url: String,
-        http_version: String,
-        headers: Vec<Header>,
-        body: Payload,
-    },
+    RequestSent { method: String, url: String, http_version: String, headers: Vec<Header>, body: Payload },
     /// The response arrived (headers first; `body` is filled when complete).
-    ResponseReceived {
-        status: u16,
-        status_text: String,
-        http_version: String,
-        headers: Vec<Header>,
-        body: Payload,
-    },
+    ResponseReceived { status: u16, status_text: String, http_version: String, headers: Vec<Header>, body: Payload },
     /// A message on a long-lived connection (WebSocket, SSE, MCP).
     Message {
         direction: Direction,

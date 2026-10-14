@@ -153,12 +153,12 @@ impl KeyringSecrets {
     const SERVICE: &str = "post-tester";
 
     fn entry(name: &str) -> Result<keyring::Entry> {
-        keyring::Entry::new(Self::SERVICE, name).map_err(keychain_error)
+        keyring::Entry::new(Self::SERVICE, name).map_err(|e| keychain_error(&e))
     }
 }
 
 #[cfg(feature = "keyring")]
-fn keychain_error(e: keyring::Error) -> crate::Error {
+fn keychain_error(e: &keyring::Error) -> crate::Error {
     std::io::Error::other(format!("keychain: {e}")).into()
 }
 
@@ -172,16 +172,16 @@ impl SecretStore for KeyringSecrets {
         match Self::entry(name)?.get_password() {
             Ok(value) => Ok(Some(value)),
             Err(keyring::Error::NoEntry) => Ok(None),
-            Err(e) => Err(keychain_error(e)),
+            Err(e) => Err(keychain_error(&e)),
         }
     }
     async fn set(&self, name: &str, value: &str) -> Result<()> {
-        Self::entry(name)?.set_password(value).map_err(keychain_error)
+        Self::entry(name)?.set_password(value).map_err(|e| keychain_error(&e))
     }
     async fn delete(&self, name: &str) -> Result<()> {
         match Self::entry(name)?.delete_credential() {
             Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-            Err(e) => Err(keychain_error(e)),
+            Err(e) => Err(keychain_error(&e)),
         }
     }
 }

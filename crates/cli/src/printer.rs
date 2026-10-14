@@ -93,7 +93,8 @@ impl State {
                     _ => format!("{} {}", style::cyan("→"), style::bold(title)),
                 };
                 // The resolved URL is printed when the request is sent, unless the title already is the URL.
-                if summary.method.as_ref().is_some_and(|m| title.starts_with(m.as_str()) && title.contains("://") && !title.contains("{{")) {
+                if summary.method.as_ref().is_some_and(|m| title.starts_with(m.as_str()) && title.contains("://") && !title.contains("{{"))
+                {
                     self.url_shown.insert(id);
                 }
                 println!("{pad}{line}");
@@ -114,7 +115,13 @@ impl State {
                     let parts: Vec<String> = phases.iter().map(|(p, ms)| format!("{} {}", phase_name(*p), style::duration(*ms))).collect();
                     println!("{pad}  {}", style::dimmed(parts.join(" · ")));
                 }
-                println!("{pad}{} {}  {}  {}", style::cyan("←"), style::status(*status, status_text), style::dimmed(http_version), style::size(body.size));
+                println!(
+                    "{pad}{} {}  {}  {}",
+                    style::cyan("←"),
+                    style::status(*status, status_text),
+                    style::dimmed(http_version),
+                    style::size(body.size)
+                );
                 if options.verbose {
                     for h in headers {
                         println!("{pad}  {}", style::dimmed(format!("< {}: {}", h.name, h.value)));

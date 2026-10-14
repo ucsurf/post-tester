@@ -31,9 +31,12 @@ impl From<Error> for ApiError {
     fn from(error: Error) -> Self {
         let status = match &error {
             Error::NotFound(_) => StatusCode::NOT_FOUND,
-            Error::InvalidRequest(_) | Error::InvalidUrl { .. } | Error::Expression { .. } | Error::Template(_) | Error::Import(_) | Error::File { .. } => {
-                StatusCode::BAD_REQUEST
-            }
+            Error::InvalidRequest(_)
+            | Error::InvalidUrl { .. }
+            | Error::Expression { .. }
+            | Error::Template(_)
+            | Error::Import(_)
+            | Error::File { .. } => StatusCode::BAD_REQUEST,
             _ => StatusCode::INTERNAL_SERVER_ERROR,
         };
         Self::new(status, error.to_string())

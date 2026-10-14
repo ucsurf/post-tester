@@ -32,10 +32,7 @@ impl CookieJar {
     /// All cookies as (domain, name, value).
     pub fn list(&self) -> Vec<(String, String, String)> {
         let store = self.store.lock().expect("cookie lock poisoned");
-        store
-            .iter_unexpired()
-            .map(|c| (c.domain().unwrap_or_default().to_string(), c.name().to_string(), c.value().to_string()))
-            .collect()
+        store.iter_unexpired().map(|c| (c.domain().unwrap_or_default().to_string(), c.name().to_string(), c.value().to_string())).collect()
     }
 
     pub fn clear(&self) {

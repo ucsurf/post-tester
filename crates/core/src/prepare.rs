@@ -29,16 +29,12 @@ pub async fn prepare(request: &Request, folders: &[FolderSettings], ctx: &dyn Te
     if !url_text.contains("://") {
         url_text = format!("http://{url_text}");
     }
-    let mut url = url::Url::parse(url_text.trim())
-        .map_err(|e| Error::InvalidUrl { url: url_text.clone(), reason: e.to_string() })?;
+    let mut url = url::Url::parse(url_text.trim()).map_err(|e| Error::InvalidUrl { url: url_text.clone(), reason: e.to_string() })?;
     let host = url.host_str().unwrap_or_default();
     if host.contains("{{") || host.contains("%7B%7B") {
         return Err(Error::InvalidUrl {
             url: url_text,
-            reason: format!(
-                "the host contains unknown variable(s): {}. Select an environment that defines them",
-                r.unresolved.join(", ")
-            ),
+            reason: format!("the host contains unknown variable(s): {}. Select an environment that defines them", r.unresolved.join(", ")),
         });
     }
     let query = r.render_pairs(&request.query).await?;
@@ -81,8 +77,7 @@ pub async fn prepare(request: &Request, folders: &[FolderSettings], ctx: &dyn Te
             let variables: serde_json::Value = if variables.trim().is_empty() {
                 serde_json::Value::Null
             } else {
-                serde_json::from_str(&variables)
-                    .map_err(|e| Error::InvalidRequest(format!("GraphQL variables are not valid JSON: {e}")))?
+                serde_json::from_str(&variables).map_err(|e| Error::InvalidRequest(format!("GraphQL variables are not valid JSON: {e}")))?
             };
             let mut payload = serde_json::json!({ "query": r.render(query).await?, "variables": variables });
             if let Some(name) = operation_name {

@@ -167,9 +167,9 @@ async fn resolve(expr: &str, ctx: &dyn TemplateContext) -> Result<Option<String>
     if let Some((name, args)) = parse_call(expr)? {
         return match ctx.function(&name, &args).await? {
             Some(value) => Ok(Some(value)),
-            None => Err(Error::Template(format!(
-                "unknown function `{name}` in `{{{{{expr}}}}}`. Is the plugin that provides it installed?"
-            ))),
+            None => {
+                Err(Error::Template(format!("unknown function `{name}` in `{{{{{expr}}}}}`. Is the plugin that provides it installed?")))
+            }
         };
     }
     Ok(ctx.variable(expr))
@@ -197,8 +197,7 @@ pub fn parse_call(expr: &str) -> Result<Option<(String, OrderedMap)>> {
         return Ok(None);
     }
     let name = expr[..open].trim();
-    let valid_name = !name.is_empty()
-        && name.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-' | '/'));
+    let valid_name = !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-' | '/'));
     if !valid_name {
         return Ok(None);
     }
@@ -214,9 +213,7 @@ pub fn parse_call(expr: &str) -> Result<Option<(String, OrderedMap)>> {
             None => (index.to_string(), part),
         };
         let value = serde_json::from_str(value.trim()).map_err(|_| {
-            Error::Template(format!(
-                "argument `{part}` in `{expr}` is not a valid value. Use \"quotes\" for text, e.g. name: \"value\""
-            ))
+            Error::Template(format!("argument `{part}` in `{expr}` is not a valid value. Use \"quotes\" for text, e.g. name: \"value\""))
         })?;
         args.insert(key, value);
     }

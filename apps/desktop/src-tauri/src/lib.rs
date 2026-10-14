@@ -72,11 +72,7 @@ fn open_initial_workspace(app: &tauri::AppHandle) -> Result<Workspace, Box<dyn s
     {
         return Ok(workspace);
     }
-    let default_dir = app
-        .path()
-        .document_dir()
-        .or_else(|_| app.path().app_data_dir())?
-        .join("post-tester");
+    let default_dir = app.path().document_dir().or_else(|_| app.path().app_data_dir())?.join("post-tester");
     let workspace = open_or_create(&default_dir)?;
     remember(app, workspace.root());
     Ok(workspace)

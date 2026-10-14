@@ -5,7 +5,7 @@
 
 use crate::engine::Engine;
 use crate::error::{Error, Result};
-use crate::events::{Direction, EventKind, Level, Span, SpanId, SpanKind, Source, Summary};
+use crate::events::{Direction, EventKind, Level, Source, Span, SpanId, SpanKind, Summary};
 use crate::template::render;
 use bytes::Bytes;
 use futures::{SinkExt, StreamExt};
@@ -47,10 +47,7 @@ impl Engine {
         let vars = self.variables(self.resolve_environment(options.environment.clone()).as_deref(), &[])?;
         let ctx = self.template_context(vars, span);
         let url = render(&options.url, &ctx).await?.text;
-        let mut request = url
-            .as_str()
-            .into_client_request()
-            .map_err(|e| Error::InvalidUrl { url: url.clone(), reason: e.to_string() })?;
+        let mut request = url.as_str().into_client_request().map_err(|e| Error::InvalidUrl { url: url.clone(), reason: e.to_string() })?;
         for (name, value) in &options.headers {
             let value = render(value, &ctx).await?.text;
             let name = http::HeaderName::from_bytes(name.as_bytes())

@@ -23,52 +23,66 @@ async fn start_server() -> String {
         .route("/redirect", get(|| async { Redirect::to("/json") }))
         .route("/loop", get(|| async { Redirect::to("/loop") }))
         .route("/set-cookie", get(|| async { ([(header::SET_COOKIE, "session=xyz; Path=/")], "ok") }))
-        .route("/echo-headers", get(|headers: HeaderMap| async move {
-            let pairs: serde_json::Map<String, serde_json::Value> = headers
-                .iter()
-                .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or_default().into()))
-                .collect();
-            axum::Json(pairs)
-        }))
-        .route("/echo", post(|headers: HeaderMap, body: String| async move {
-            let content_type = headers.get(header::CONTENT_TYPE).and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
-            axum::Json(serde_json::json!({ "content_type": content_type, "body": body }))
-        }))
-        .route("/gzip", get(|| async {
-            let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
-            encoder.write_all(b"compressed hello").unwrap();
-            ([(header::CONTENT_ENCODING, "gzip")], encoder.finish().unwrap())
-        }))
-        .route("/sse", get(|| async {
-            let stream = futures::stream::unfold(0, |n| async move {
-                if n == 3 {
-                    return None;
-                }
-                tokio::time::sleep(Duration::from_millis(20)).await;
-                let chunk = format!("event: tick\ndata: {n}\n\n");
-                Some((Ok::<_, std::io::Error>(chunk), n + 1))
-            });
-            Response::builder()
-                .header(header::CONTENT_TYPE, "text/event-stream")
-                .body(AxumBody::from_stream(stream))
-                .unwrap()
-        }))
-        .route("/slow", get(|| async {
-            tokio::time::sleep(Duration::from_secs(5)).await;
-            "late"
-        }))
-        .route("/status/{code}", get(|axum::extract::Path(code): axum::extract::Path<u16>| async move {
-            StatusCode::from_u16(code).unwrap().into_response()
-        }))
-        .route("/ws", any(|ws: WebSocketUpgrade| async {
-            ws.on_upgrade(|mut socket| async move {
-                while let Some(Ok(message)) = socket.recv().await {
-                    if let WsMessage::Text(text) = message {
-                        let _ = socket.send(WsMessage::Text(format!("echo: {text}").into())).await;
+        .route(
+            "/echo-headers",
+            get(|headers: HeaderMap| async move {
+                let pairs: serde_json::Map<String, serde_json::Value> =
+                    headers.iter().map(|(k, v)| (k.to_string(), v.to_str().unwrap_or_default().into())).collect();
+                axum::Json(pairs)
+            }),
+        )
+        .route(
+            "/echo",
+            post(|headers: HeaderMap, body: String| async move {
+                let content_type = headers.get(header::CONTENT_TYPE).and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
+                axum::Json(serde_json::json!({ "content_type": content_type, "body": body }))
+            }),
+        )
+        .route(
+            "/gzip",
+            get(|| async {
+                let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+                encoder.write_all(b"compressed hello").unwrap();
+                ([(header::CONTENT_ENCODING, "gzip")], encoder.finish().unwrap())
+            }),
+        )
+        .route(
+            "/sse",
+            get(|| async {
+                let stream = futures::stream::unfold(0, |n| async move {
+                    if n == 3 {
+                        return None;
                     }
-                }
-            })
-        }));
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                    let chunk = format!("event: tick\ndata: {n}\n\n");
+                    Some((Ok::<_, std::io::Error>(chunk), n + 1))
+                });
+                Response::builder().header(header::CONTENT_TYPE, "text/event-stream").body(AxumBody::from_stream(stream)).unwrap()
+            }),
+        )
+        .route(
+            "/slow",
+            get(|| async {
+                tokio::time::sleep(Duration::from_secs(5)).await;
+                "late"
+            }),
+        )
+        .route(
+            "/status/{code}",
+            get(|axum::extract::Path(code): axum::extract::Path<u16>| async move { StatusCode::from_u16(code).unwrap().into_response() }),
+        )
+        .route(
+            "/ws",
+            any(|ws: WebSocketUpgrade| async {
+                ws.on_upgrade(|mut socket| async move {
+                    while let Some(Ok(message)) = socket.recv().await {
+                        if let WsMessage::Text(text) = message {
+                            let _ = socket.send(WsMessage::Text(format!("echo: {text}").into())).await;
+                        }
+                    }
+                })
+            }),
+        );
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
@@ -232,9 +246,7 @@ async fn collection_runs_chain_requests_through_variables() {
     env.variables.insert("baseUrl".into(), base.clone().into());
     workspace.write_environment("local", &env).unwrap();
     workspace.delete_request("examples/get-ip").unwrap();
-    workspace
-        .write_request("flow/1-login", &request("url: \"{{baseUrl}}/json\"\nextract: { token: json($.token) }"))
-        .unwrap();
+    workspace.write_request("flow/1-login", &request("url: \"{{baseUrl}}/json\"\nextract: { token: json($.token) }")).unwrap();
     workspace
         .write_request(
             "flow/2-me",
@@ -258,10 +270,7 @@ async fn websocket_messages_are_reported_live() {
     let base = start_server().await;
     let engine = engine();
     let url = base.replace("http://", "ws://") + "/ws";
-    let session = engine
-        .ws_connect(WsOptions { url, headers: vec![], source: Source::User, environment: None })
-        .await
-        .unwrap();
+    let session = engine.ws_connect(WsOptions { url, headers: vec![], source: Source::User, environment: None }).await.unwrap();
     let mut events = engine.bus().subscribe();
     engine.ws_send(session, "hi").unwrap();
     let reply = tokio::time::timeout(Duration::from_secs(5), async {

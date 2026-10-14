@@ -36,12 +36,7 @@ trait Io: AsyncRead + AsyncWrite + Unpin + Send {}
 impl<T: AsyncRead + AsyncWrite + Unpin + Send> Io for T {}
 
 /// Sends a request, following redirects if enabled.
-pub async fn send(
-    request: PreparedRequest,
-    span: &Span,
-    cookies: Option<&CookieJar>,
-    cancel: &CancellationToken,
-) -> Result<Response> {
+pub async fn send(request: PreparedRequest, span: &Span, cookies: Option<&CookieJar>, cancel: &CancellationToken) -> Result<Response> {
     let started = Instant::now();
     let mut current = request;
     let mut redirects = 0;
@@ -90,12 +85,7 @@ fn redirect_target(request: &PreparedRequest, response: &Response) -> Option<Pre
     Some(next)
 }
 
-async fn send_once(
-    request: &PreparedRequest,
-    span: &Span,
-    cookies: Option<&CookieJar>,
-    cancel: &CancellationToken,
-) -> Result<Response> {
+async fn send_once(request: &PreparedRequest, span: &Span, cookies: Option<&CookieJar>, cancel: &CancellationToken) -> Result<Response> {
     let url = &request.url;
     let secure = match url.scheme() {
         "https" => true,
@@ -151,8 +141,8 @@ async fn send_once(
     let (io, tls, use_h2): (Box<dyn Io>, Option<TlsInfo>, bool) = if secure {
         let t = Instant::now();
         let config = super::tls::client_config(request.options.verify_tls, request.options.http_version);
-        let server_name = ServerName::try_from(host.clone())
-            .map_err(|e| Error::InvalidUrl { url: url.to_string(), reason: e.to_string() })?;
+        let server_name =
+            ServerName::try_from(host.clone()).map_err(|e| Error::InvalidUrl { url: url.to_string(), reason: e.to_string() })?;
         let stream = within(deadline, TlsConnector::from(config).connect(server_name, tcp))
             .await
             .map_err(|_| Error::Timeout(request.options.timeout_ms))?
@@ -239,24 +229,17 @@ async fn send_once(
     span.phase(Phase::Waiting, timings.waiting);
 
     let status = response.status();
-    let response_headers: Vec<(String, String)> = response
-        .headers()
-        .iter()
-        .map(|(k, v)| (k.as_str().to_string(), String::from_utf8_lossy(v.as_bytes()).into_owned()))
-        .collect();
+    let response_headers: Vec<(String, String)> =
+        response.headers().iter().map(|(k, v)| (k.as_str().to_string(), String::from_utf8_lossy(v.as_bytes()).into_owned())).collect();
     let response_version = match response.version() {
         http::Version::HTTP_2 => "HTTP/2",
         http::Version::HTTP_10 => "HTTP/1.0",
         _ => "HTTP/1.1",
     };
     if let Some(jar) = cookies {
-        jar.store(
-            url,
-            response_headers.iter().filter(|(k, _)| k.eq_ignore_ascii_case("set-cookie")).map(|(_, v)| v.as_str()),
-        );
+        jar.store(url, response_headers.iter().filter(|(k, _)| k.eq_ignore_ascii_case("set-cookie")).map(|(_, v)| v.as_str()));
     }
-    let content_type =
-        response_headers.iter().find(|(k, _)| k.eq_ignore_ascii_case("content-type")).map(|(_, v)| v.clone());
+    let content_type = response_headers.iter().find(|(k, _)| k.eq_ignore_ascii_case("content-type")).map(|(_, v)| v.clone());
     let is_sse = content_type.as_deref().is_some_and(|ct| ct.starts_with("text/event-stream"));
 
     // 5. Download the body (streaming events live for SSE)
@@ -356,7 +339,5 @@ fn host_header(url: &Url) -> String {
 }
 
 fn is_connection_specific(name: &str) -> bool {
-    ["connection", "keep-alive", "proxy-connection", "transfer-encoding", "upgrade", "host"]
-        .iter()
-        .any(|h| name.eq_ignore_ascii_case(h))
+    ["connection", "keep-alive", "proxy-connection", "transfer-encoding", "upgrade", "host"].iter().any(|h| name.eq_ignore_ascii_case(h))
 }

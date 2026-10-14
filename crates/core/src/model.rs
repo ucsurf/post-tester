@@ -156,8 +156,13 @@ impl Body {
 pub enum Auth {
     /// Explicitly no auth (stops folder inheritance).
     None,
-    Basic { username: String, password: String },
-    Bearer { token: String },
+    Basic {
+        username: String,
+        password: String,
+    },
+    Bearer {
+        token: String,
+    },
     /// An API key in a header or query parameter.
     ApiKey {
         key: String,

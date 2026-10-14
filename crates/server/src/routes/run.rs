@@ -84,7 +84,8 @@ pub struct LoadBody {
 }
 
 pub async fn load_test(State(state): State<AppState>, Json(body): Json<LoadBody>) -> ApiResult<Json<LoadReport>> {
-    let options = LoadOptions { source: Source::User, environment: body.environment, concurrency: body.concurrency, requests: body.requests };
+    let options =
+        LoadOptions { source: Source::User, environment: body.environment, concurrency: body.concurrency, requests: body.requests };
     Ok(Json(state.engine.load_test(&body.request, body.request_id, options).await?))
 }
 

@@ -60,7 +60,8 @@ pub async fn run(workspace: Option<&Path>, args: RunArgs) -> Result<ExitCode> {
         iterations: args.iterations,
         delay: Duration::from_millis(args.delay),
     };
-    let live = matches!(args.reporter, Reporter::Pretty) || (args.output.is_some() && matches!(args.reporter, Reporter::Json | Reporter::Junit));
+    let live =
+        matches!(args.reporter, Reporter::Pretty) || (args.output.is_some() && matches!(args.reporter, Reporter::Json | Reporter::Junit));
     let printer = live.then(|| LivePrinter::start(ctx.engine.bus(), PrintOptions { verbose: args.verbose }));
     let report = ctx.engine.run(target, options).await?;
     if let Some(printer) = printer {

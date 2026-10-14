@@ -135,7 +135,10 @@ mod tests {
         assert_eq!(detect("curl https://x.dev"), Some(Format::Curl));
         assert_eq!(detect(r#"{"openapi":"3.0.0"}"#), Some(Format::Openapi));
         assert_eq!(detect("openapi: 3.1.0\ninfo: {}\n"), Some(Format::Openapi));
-        assert_eq!(detect(r#"{"info":{"schema":"https://schema.getpostman.com/json/collection/v2.1.0/collection.json"},"item":[]}"#), Some(Format::Postman));
+        assert_eq!(
+            detect(r#"{"info":{"schema":"https://schema.getpostman.com/json/collection/v2.1.0/collection.json"},"item":[]}"#),
+            Some(Format::Postman)
+        );
         assert_eq!(detect("hello"), None);
     }
 

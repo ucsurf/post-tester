@@ -31,9 +31,10 @@ pub fn find(id: &str) -> Option<&'static Generator> {
 
 /// Headers worth showing in generated code (skips ones every client adds itself).
 fn visible_headers(request: &PreparedRequest) -> impl Iterator<Item = &(String, String)> {
-    request.headers.iter().filter(|(k, _)| {
-        !["host", "content-length", "user-agent", "accept-encoding"].iter().any(|h| k.eq_ignore_ascii_case(h))
-    })
+    request
+        .headers
+        .iter()
+        .filter(|(k, _)| !["host", "content-length", "user-agent", "accept-encoding"].iter().any(|h| k.eq_ignore_ascii_case(h)))
 }
 
 fn body_text(request: &PreparedRequest) -> Option<String> {

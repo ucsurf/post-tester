@@ -1,0 +1,3 @@
+# Wide lines read better for the long, descriptive error messages in this codebase.
+max_width = 140
+use_small_heuristics = "Max"

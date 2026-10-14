@@ -9,7 +9,7 @@
 //! ```
 
 use crate::error::{Error, Result};
-use crate::events::{EventBus, EventKind, Level, Outcome, Span, SpanId, SpanKind, Source, Summary};
+use crate::events::{EventBus, EventKind, Level, Outcome, Source, Span, SpanId, SpanKind, Summary};
 use crate::expr::{Assertion, AssertionResult, extract};
 use crate::extensions::{Extensions, NoExtensions, ScriptInput, ScriptOutput, ScriptPhase, ScriptRequest, ScriptResponse};
 use crate::http::{self, CookieJar, PreparedRequest, Response};
@@ -379,7 +379,14 @@ impl Engine {
             _ => Vec::new(),
         };
         let vars = self.variables(self.resolve_environment(environment).as_deref(), &folders)?;
-        let span = Span::start(&EventBus::new(crate::events::BusConfig { history_len: 1, blob_capacity_bytes: 0 }), Source::System, None, SpanKind::System, "preview", Summary::default());
+        let span = Span::start(
+            &EventBus::new(crate::events::BusConfig { history_len: 1, blob_capacity_bytes: 0 }),
+            Source::System,
+            None,
+            SpanKind::System,
+            "preview",
+            Summary::default(),
+        );
         let ctx = MaskedSecrets(self.template_context(vars, &span));
         let prepared = prepare(request, &folders, &ctx).await?;
         span.finish_ok(None, None);

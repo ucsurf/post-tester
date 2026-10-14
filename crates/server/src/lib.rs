@@ -56,9 +56,7 @@ pub fn router(state: AppState, extra: Option<Router<AppState>>) -> Router {
     if let Some(extra) = extra {
         app = app.merge(extra);
     }
-    app.fallback(assets::serve)
-        .layer(axum::middleware::from_fn_with_state(state.clone(), security::guard))
-        .with_state(state)
+    app.fallback(assets::serve).layer(axum::middleware::from_fn_with_state(state.clone(), security::guard)).with_state(state)
 }
 
 /// Starts listening. `extra` lets the caller mount more routes (e.g. MCP).
@@ -70,7 +68,10 @@ pub async fn serve(
 ) -> std::io::Result<RunningServer> {
     let listener = tokio::net::TcpListener::bind((config.host, config.port)).await.map_err(|e| {
         if e.kind() == std::io::ErrorKind::AddrInUse {
-            std::io::Error::new(e.kind(), format!("port {} is already in use. Stop the other program or choose another port with --port", config.port))
+            std::io::Error::new(
+                e.kind(),
+                format!("port {} is already in use. Stop the other program or choose another port with --port", config.port),
+            )
         } else {
             e
         }

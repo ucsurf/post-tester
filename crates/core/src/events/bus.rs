@@ -26,10 +26,7 @@ pub struct BusConfig {
 
 impl Default for BusConfig {
     fn default() -> Self {
-        Self {
-            history_len: 20_000,
-            blob_capacity_bytes: 256 * 1024 * 1024,
-        }
+        Self { history_len: 20_000, blob_capacity_bytes: 256 * 1024 * 1024 }
     }
 }
 
@@ -52,9 +49,7 @@ struct Inner {
 
 impl std::fmt::Debug for EventBus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("EventBus")
-            .field("subscribers", &self.inner.sender.receiver_count())
-            .finish_non_exhaustive()
+        f.debug_struct("EventBus").field("subscribers", &self.inner.sender.receiver_count()).finish_non_exhaustive()
     }
 }
 
@@ -80,13 +75,7 @@ impl EventBus {
     }
 
     /// Publishes an event to every subscriber and returns it.
-    pub fn emit(
-        &self,
-        span_id: SpanId,
-        parent_id: Option<SpanId>,
-        source: &Source,
-        kind: EventKind,
-    ) -> Arc<Event> {
+    pub fn emit(&self, span_id: SpanId, parent_id: Option<SpanId>, source: &Source, kind: EventKind) -> Arc<Event> {
         let mut recent = self.inner.recent.lock().expect("event history lock poisoned");
         // The sequence number is taken under the lock so `recent` is always ordered.
         let event = Arc::new(Event {
@@ -119,25 +108,12 @@ impl EventBus {
 
     /// Recent events, oldest first.
     pub fn recent(&self) -> Vec<Arc<Event>> {
-        self.inner
-            .recent
-            .lock()
-            .expect("event history lock poisoned")
-            .iter()
-            .cloned()
-            .collect()
+        self.inner.recent.lock().expect("event history lock poisoned").iter().cloned().collect()
     }
 
     /// Recent events belonging to one span (not including child spans).
     pub fn span_events(&self, span_id: SpanId) -> Vec<Arc<Event>> {
-        self.inner
-            .recent
-            .lock()
-            .expect("event history lock poisoned")
-            .iter()
-            .filter(|e| e.span_id == span_id)
-            .cloned()
-            .collect()
+        self.inner.recent.lock().expect("event history lock poisoned").iter().filter(|e| e.span_id == span_id).cloned().collect()
     }
 
     /// Storage for large payloads referenced by events.

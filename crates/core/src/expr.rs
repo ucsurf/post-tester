@@ -135,10 +135,7 @@ pub fn parse_subject(input: &str) -> Result<(Subject, &str)> {
             return Ok((subject, &after[close + 1..]));
         }
     }
-    Err(expr_error(
-        input,
-        "expected a subject: status, time, size, body, header(name) or json($.path)",
-    ))
+    Err(expr_error(input, "expected a subject: status, time, size, body, header(name) or json($.path)"))
 }
 
 /// Index of the `)` that closes an already-opened `(`.
@@ -167,12 +164,9 @@ impl Assertion {
     pub fn parse(source: &str) -> Result<Self> {
         let (subject, rest) = parse_subject(source)?;
         let rest = rest.trim_start();
-        let (op, rest) = Op::ALL
-            .iter()
-            .find_map(|(token, op)| rest.strip_prefix(token).map(|r| (*op, r)))
-            .ok_or_else(|| {
-                expr_error(source, "expected an operator: == != < <= > >= contains exists matches (or !contains !exists !matches)")
-            })?;
+        let (op, rest) = Op::ALL.iter().find_map(|(token, op)| rest.strip_prefix(token).map(|r| (*op, r))).ok_or_else(|| {
+            expr_error(source, "expected an operator: == != < <= > >= contains exists matches (or !contains !exists !matches)")
+        })?;
         let value_text = rest.trim();
         let expected = match (op.needs_value(), value_text.is_empty()) {
             (true, true) => return Err(expr_error(source, "missing the value to compare with")),
@@ -244,11 +238,7 @@ pub fn read(subject: &Subject, response: &ResponseData<'_>) -> Option<Value> {
         Subject::Time => serde_json::Number::from_f64((response.time_ms * 100.0).round() / 100.0).map(Value::Number),
         Subject::Size => Some(response.body.len().into()),
         Subject::Body => Some(String::from_utf8_lossy(response.body).into_owned().into()),
-        Subject::Header(name) => response
-            .headers
-            .iter()
-            .find(|(k, _)| k.eq_ignore_ascii_case(name))
-            .map(|(_, v)| Value::String(v.clone())),
+        Subject::Header(name) => response.headers.iter().find(|(k, _)| k.eq_ignore_ascii_case(name)).map(|(_, v)| Value::String(v.clone())),
         Subject::Json(path) => {
             let body: Value = serde_json::from_slice(response.body).ok()?;
             let path = JsonPath::parse(path).ok()?;

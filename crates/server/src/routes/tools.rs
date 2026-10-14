@@ -24,7 +24,11 @@ pub struct CodegenTarget {
 
 pub async fn codegen_targets(State(state): State<AppState>) -> Json<Vec<CodegenTarget>> {
     let built_in = codegen::GENERATORS.iter().map(|g| CodegenTarget { id: g.id.into(), name: g.name.into(), language: g.language.into() });
-    let plugins = state.plugins.codegen_targets().into_iter().map(|(id, info)| CodegenTarget { id, name: info.display_name, language: info.language });
+    let plugins = state.plugins.codegen_targets().into_iter().map(|(id, info)| CodegenTarget {
+        id,
+        name: info.display_name,
+        language: info.language,
+    });
     Json(built_in.chain(plugins).collect())
 }
 
@@ -95,9 +99,11 @@ pub async fn approve_plugin(State(state): State<AppState>, Path(name): Path<Stri
     let mut settings = workspace.settings()?;
     settings.approved_permissions.insert(name.clone(), plugin.manifest.permissions.clone());
     workspace.save_settings(&settings)?;
-    let reloaded = state.plugins.load(&plugin.dir, plugin.manifest.permissions.clone()).await.map_err(|problems| {
-        ApiError::bad_request(problems.iter().map(ToString::to_string).collect::<Vec<_>>().join("\n"))
-    })?;
+    let reloaded = state
+        .plugins
+        .load(&plugin.dir, plugin.manifest.permissions.clone())
+        .await
+        .map_err(|problems| ApiError::bad_request(problems.iter().map(ToString::to_string).collect::<Vec<_>>().join("\n")))?;
     Ok(Json(reloaded.info()))
 }
 

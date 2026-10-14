@@ -153,9 +153,14 @@ pub async fn load(workspace: Option<&Path>, args: LoadArgs) -> Result<ExitCode> 
         println!();
         println!("  requests     {} ({} failed)", report.requests, report.failed);
         println!("  throughput   {:.1} req/s", report.requests_per_second);
-        println!("  latency      min {} · p50 {} · p90 {} · p99 {} · max {}",
-            style::duration(report.min_ms), style::duration(report.p50_ms), style::duration(report.p90_ms),
-            style::duration(report.p99_ms), style::duration(report.max_ms));
+        println!(
+            "  latency      min {} · p50 {} · p90 {} · p99 {} · max {}",
+            style::duration(report.min_ms),
+            style::duration(report.p50_ms),
+            style::duration(report.p90_ms),
+            style::duration(report.p99_ms),
+            style::duration(report.max_ms)
+        );
         let codes: Vec<String> = report.status_codes.iter().map(|(code, n)| format!("{code}×{n}")).collect();
         println!("  status       {}", codes.join("  "));
     }

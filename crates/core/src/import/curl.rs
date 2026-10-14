@@ -75,20 +75,13 @@ pub fn parse(command: &str) -> Result<Request> {
     }
     if !data.is_empty() {
         let content = data.join("&");
-        let content_type = request
-            .headers
-            .iter()
-            .find(|h| h.key.eq_ignore_ascii_case("content-type"))
-            .map(|h| h.value.clone());
+        let content_type = request.headers.iter().find(|h| h.key.eq_ignore_ascii_case("content-type")).map(|h| h.value.clone());
         let looks_like_json = is_json || content_type.as_deref().is_some_and(|ct| ct.contains("json"));
         request.body = if looks_like_json {
             request.headers.retain(|h| !h.key.eq_ignore_ascii_case("content-type"));
             Body::Json { content }
         } else {
-            Body::Text {
-                content,
-                content_type: content_type.unwrap_or_else(|| "application/x-www-form-urlencoded".into()),
-            }
+            Body::Text { content, content_type: content_type.unwrap_or_else(|| "application/x-www-form-urlencoded".into()) }
         };
         if let Body::Text { .. } = request.body {
             request.headers.retain(|h| !h.key.eq_ignore_ascii_case("content-type"));

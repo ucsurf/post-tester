@@ -5,7 +5,7 @@
 
 use crate::engine::{Engine, Execution, SendOptions};
 use crate::error::Result;
-use crate::events::{Level, Outcome, Span, SpanId, SpanKind, Source, Summary};
+use crate::events::{Level, Outcome, Source, Span, SpanId, SpanKind, Summary};
 use crate::expr::AssertionResult;
 use serde::Serialize;
 use std::time::Duration;
@@ -89,14 +89,8 @@ impl Engine {
         let iterations = options.iterations.max(1);
         let total = u32::try_from(ids.len()).unwrap_or(u32::MAX).saturating_mul(iterations);
 
-        let span = Span::start(
-            self.bus(),
-            options.source.clone(),
-            None,
-            SpanKind::CollectionRun,
-            format!("Run \"{name}\""),
-            Summary::default(),
-        );
+        let span =
+            Span::start(self.bus(), options.source.clone(), None, SpanKind::CollectionRun, format!("Run \"{name}\""), Summary::default());
         let guard = self.track(&span, None);
         span.progress(0, total);
         if ids.is_empty() {

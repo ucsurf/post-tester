@@ -6,7 +6,7 @@
 
 use crate::engine::{Engine, SendOptions};
 use crate::error::Result;
-use crate::events::{EventBus, BusConfig, Level, Outcome, Span, SpanId, SpanKind, Source, Summary};
+use crate::events::{BusConfig, EventBus, Level, Outcome, Source, Span, SpanId, SpanKind, Summary};
 use crate::model::Request;
 use serde::Serialize;
 use std::sync::Arc;
@@ -47,11 +47,7 @@ impl LoadReport {
     fn from_samples(samples: &mut [f64], statuses: &[u16], failed: u64, elapsed: Duration) -> Self {
         samples.sort_by(f64::total_cmp);
         let percentile = |p: f64| {
-            if samples.is_empty() {
-                0.0
-            } else {
-                samples[((samples.len() - 1) as f64 * p).round() as usize]
-            }
+            if samples.is_empty() { 0.0 } else { samples[((samples.len() - 1) as f64 * p).round() as usize] }
         };
         let mut status_codes = std::collections::BTreeMap::new();
         for status in statuses {
@@ -94,14 +90,20 @@ struct Samples {
 impl Engine {
     /// Sends `request` `options.requests` times with `options.concurrency` workers.
     pub async fn load_test(self: &Arc<Self>, request: &Request, request_id: Option<String>, options: LoadOptions) -> Result<LoadReport> {
-        let title = format!("Load test: {} {}", request.method.as_str(), if request.name.is_empty() { &request.url } else { &request.name });
+        let title =
+            format!("Load test: {} {}", request.method.as_str(), if request.name.is_empty() { &request.url } else { &request.name });
         let span = Span::start(
             self.bus(),
             options.source.clone(),
             None,
             SpanKind::Request,
             title,
-            Summary { protocol: Some("load".into()), method: Some(request.method.as_str().into()), url: Some(request.url.clone()), request_id: request_id.clone() },
+            Summary {
+                protocol: Some("load".into()),
+                method: Some(request.method.as_str().into()),
+                url: Some(request.url.clone()),
+                request_id: request_id.clone(),
+            },
         );
         let guard = self.track(&span, None);
         let total = options.requests.max(1);
@@ -109,7 +111,11 @@ impl Engine {
         span.log(Level::Info, format!("{total} requests, {concurrency} at a time"));
 
         // Requests run against a private, silent bus so they don't flood Live Activity.
-        let quiet = Arc::new(Engine::new(EventBus::new(BusConfig { history_len: 1, blob_capacity_bytes: 0 }), self.workspace(), self.secrets().clone()));
+        let quiet = Arc::new(Engine::new(
+            EventBus::new(BusConfig { history_len: 1, blob_capacity_bytes: 0 }),
+            self.workspace(),
+            self.secrets().clone(),
+        ));
         quiet.set_extensions(self.extensions());
         for (k, v) in self.runtime_variables() {
             quiet.set_runtime_variable(&k, &v);

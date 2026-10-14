@@ -80,11 +80,6 @@ impl Response {
 
     /// A view used by tests and extraction expressions.
     pub fn data(&self) -> ResponseData<'_> {
-        ResponseData {
-            status: self.status,
-            headers: &self.headers,
-            body: &self.body,
-            time_ms: crate::events::millis(self.total),
-        }
+        ResponseData { status: self.status, headers: &self.headers, body: &self.body, time_ms: crate::events::millis(self.total) }
     }
 }

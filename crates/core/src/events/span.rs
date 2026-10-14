@@ -171,11 +171,7 @@ mod tests {
         let span = Span::start(&bus, Source::User, None, SpanKind::Request, "x", Summary::default());
         span.finish_ok(Some(200), None);
         span.finish_error("ignored");
-        let finished = bus
-            .span_events(span.id())
-            .iter()
-            .filter(|e| matches!(e.kind, EventKind::Finished { .. }))
-            .count();
+        let finished = bus.span_events(span.id()).iter().filter(|e| matches!(e.kind, EventKind::Finished { .. })).count();
         assert_eq!(finished, 1);
     }
 

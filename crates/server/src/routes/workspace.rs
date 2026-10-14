@@ -89,7 +89,11 @@ pub async fn get_environment(State(state): State<AppState>, Path(name): Path<Str
     Ok(Json(workspace(&state)?.read_environment(&name)?))
 }
 
-pub async fn put_environment(State(state): State<AppState>, Path(name): Path<String>, Json(env): Json<Environment>) -> ApiResult<StatusCode> {
+pub async fn put_environment(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+    Json(env): Json<Environment>,
+) -> ApiResult<StatusCode> {
     workspace(&state)?.write_environment(&name, &env)?;
     Ok(StatusCode::NO_CONTENT)
 }

@@ -105,13 +105,7 @@ pub trait Extensions: Send + Sync {
     }
 
     /// Applies a plugin auth method (`auth: { type: plugin, name: ... }`).
-    async fn apply_auth(
-        &self,
-        name: &str,
-        _config: &OrderedMap,
-        _request: PreparedRequest,
-        _span: &Span,
-    ) -> Result<PreparedRequest> {
+    async fn apply_auth(&self, name: &str, _config: &OrderedMap, _request: PreparedRequest, _span: &Span) -> Result<PreparedRequest> {
         Err(Error::Plugin(format!("no plugin provides the auth method `{name}`. Install the plugin or change the request's auth")))
     }
 

@@ -41,15 +41,8 @@ pub async fn guard(State(state): State<AppState>, request: Request, next: Next) 
 }
 
 fn has_token(request: &Request, expected: &str) -> bool {
-    let bearer = request
-        .headers()
-        .get(header::AUTHORIZATION)
-        .and_then(|h| h.to_str().ok())
-        .and_then(|h| h.strip_prefix("Bearer "));
-    let query = request
-        .uri()
-        .query()
-        .and_then(|q| q.split('&').find_map(|pair| pair.strip_prefix("token=")));
+    let bearer = request.headers().get(header::AUTHORIZATION).and_then(|h| h.to_str().ok()).and_then(|h| h.strip_prefix("Bearer "));
+    let query = request.uri().query().and_then(|q| q.split('&').find_map(|pair| pair.strip_prefix("token=")));
     [bearer, query].into_iter().flatten().any(|given| constant_time_eq(given.as_bytes(), expected.as_bytes()))
 }
 

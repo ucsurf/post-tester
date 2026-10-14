@@ -84,10 +84,7 @@ impl Workspace {
     pub fn open(root: impl Into<PathBuf>) -> Result<Self> {
         let root = root.into();
         if !root.join(SETTINGS_FILE).is_file() {
-            return Err(Error::file(
-                root.join(SETTINGS_FILE),
-                "not a post-tester workspace. Run `pt init` to create one here",
-            ));
+            return Err(Error::file(root.join(SETTINGS_FILE), "not a post-tester workspace. Run `pt init` to create one here"));
         }
         Ok(Self { root })
     }

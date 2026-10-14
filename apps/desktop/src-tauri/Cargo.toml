@@ -1,0 +1,31 @@
+[package]
+name = "post-tester-desktop"
+description = "The post-tester desktop and mobile app."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lib]
+# `staticlib`/`cdylib` are needed for the iOS and Android builds.
+name = "post_tester_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+post-tester-core.workspace = true
+post-tester-plugin-host.workspace = true
+post-tester-server.workspace = true
+tauri = { version = "2", features = [] }
+tokio.workspace = true
+tracing.workspace = true
+
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+tauri-plugin-dialog = "2"
+post-tester-core = { workspace = true, features = ["keyring"] }
+
+[lints]
+workspace = true

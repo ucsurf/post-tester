@@ -22,7 +22,7 @@ use serde_json::Value;
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tokio::io::AsyncBufReadExt;
+use tokio::io::AsyncReadExt;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use trace::{Traced, Tracer};
@@ -31,10 +31,15 @@ use ts_rs::TS;
 /// How long connecting and initializing may take. Generous, because
 /// `npx`/`uvx` servers often download packages on first start.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(60);
+/// How long one call (a tool call, a resource read, a list) may take before
+/// it fails, so a server that stops answering cannot hang the caller.
+const CALL_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 /// How long `close` waits for a server to shut down cleanly.
 const CLOSE_TIMEOUT: Duration = Duration::from_secs(10);
 /// How many stderr lines of a stdio server are kept to explain failures.
 const STDERR_LINES: usize = 20;
+/// Longer stderr lines are split, so a server cannot grow memory without bound.
+const STDERR_LINE_BYTES: usize = 4096;
 
 /// How to reach an MCP server.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -122,6 +127,7 @@ struct Session {
     cancel: CancellationToken,
     /// Watches the connection and finishes the span when it ends.
     task: Mutex<Option<JoinHandle<()>>>,
+    call_timeout: Duration,
 }
 
 impl Session {
@@ -131,9 +137,26 @@ impl Session {
 }
 
 /// Open MCP client sessions. Shared by the server's `/api/mcp/*` routes.
+///
+/// Dropping it closes every session (stdio servers are stopped).
 pub struct McpClients {
     engine: Arc<Engine>,
     sessions: Sessions,
+    timeouts: Timeouts,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct Timeouts {
+    connect: Duration,
+    call: Duration,
+}
+
+impl Drop for McpClients {
+    fn drop(&mut self) {
+        for session in self.lock().drain().map(|(_, session)| session) {
+            session.cancel.cancel();
+        }
+    }
 }
 
 impl std::fmt::Debug for McpClients {
@@ -144,7 +167,14 @@ impl std::fmt::Debug for McpClients {
 
 impl McpClients {
     pub fn new(engine: Arc<Engine>) -> Self {
-        Self { engine, sessions: Arc::default() }
+        Self { engine, sessions: Arc::default(), timeouts: Timeouts { connect: CONNECT_TIMEOUT, call: CALL_TIMEOUT } }
+    }
+
+    /// Changes how long connecting (start-up and handshake) and each call may
+    /// take. The defaults are 60 seconds and 5 minutes.
+    pub fn with_timeouts(mut self, connect: Duration, call: Duration) -> Self {
+        self.timeouts = Timeouts { connect, call };
+        self
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<String, Arc<Session>>> {
@@ -169,7 +199,7 @@ impl McpClients {
 
         let tracer = Tracer::new(span.clone());
         let cancel = CancellationToken::new();
-        let client = match open(&options.transport, &span, &tracer, &cancel).await {
+        let client = match open(&options.transport, &span, &tracer, &cancel, self.timeouts.connect).await {
             Ok(client) => client,
             Err(error) => {
                 span.finish_error(&error);
@@ -181,7 +211,8 @@ impl McpClients {
 
         let id = span.id().to_string();
         let peer = client.peer().clone();
-        let info = describe(&id, &options, &span, &peer).await;
+        // Listing is part of connecting, so it gets the (shorter) connect time limit.
+        let info = describe(&id, &options, &span, &peer, self.timeouts.connect.min(self.timeouts.call)).await;
         span.log(
             Level::Info,
             format!(
@@ -201,6 +232,7 @@ impl McpClients {
             tracer,
             cancel: cancel.clone(),
             task: Mutex::new(None),
+            call_timeout: self.timeouts.call,
         });
         self.lock().insert(id.clone(), session.clone());
         let task = tokio::spawn(watch(self.engine.clone(), self.sessions.clone(), id, client, span, cancel));
@@ -223,7 +255,7 @@ impl McpClients {
             let info = session.info();
             ConnectOptions { name: Some(info.name), transport: info.transport }
         };
-        let info = describe(id, &options, &session.span, &session.peer).await;
+        let info = describe(id, &options, &session.span, &session.peer, session.call_timeout).await;
         *session.info.lock().expect("session lock poisoned") = info.clone();
         Ok(info)
     }
@@ -290,7 +322,12 @@ impl Session {
     ) -> Result<Value> {
         let _expectation = self.tracer.expect(method, span);
         let result = tokio::select! {
-            result = call => result,
+            result = tokio::time::timeout(self.call_timeout, call) => result.map_err(|_| {
+                Error::Mcp(format!(
+                    "{method} timed out: the server did not answer within {}. It may be stuck; close the session and connect again",
+                    show_duration(self.call_timeout)
+                ))
+            })?,
             () = self.cancel.cancelled() => return Err(Error::Mcp("the session was closed".into())),
         };
         let value = result.map_err(|e| Error::Mcp(format!("{method} failed: {e}")))?;
@@ -335,12 +372,21 @@ fn client_config() -> ClientConfig {
         .with_protocol_version(ProtocolVersion::LATEST_WITH_INITIALIZE)
 }
 
-async fn open(transport: &Transport, span: &Span, tracer: &Arc<Tracer>, cancel: &CancellationToken) -> Result<Client> {
+/// `90 seconds`, `5 minutes`, `250 ms`.
+fn show_duration(duration: Duration) -> String {
+    match duration.as_secs() {
+        0 => format!("{} ms", duration.as_millis()),
+        seconds if seconds % 60 == 0 && seconds >= 120 => format!("{} minutes", seconds / 60),
+        seconds => format!("{seconds} seconds"),
+    }
+}
+
+async fn open(transport: &Transport, span: &Span, tracer: &Arc<Tracer>, cancel: &CancellationToken, timeout: Duration) -> Result<Client> {
     match transport {
         Transport::Stdio { command, args, env, cwd } => {
             let stderr = Arc::new(Mutex::new(VecDeque::new()));
             let child = spawn(command, args, env, cwd.as_deref(), span, &stderr)?;
-            initialize(child, tracer, cancel).await.map_err(|e| {
+            initialize(child, tracer, cancel, timeout).await.map_err(|e| {
                 let output = stderr.lock().expect("stderr lock poisoned").iter().cloned().collect::<Vec<_>>().join("\n");
                 let hint = if output.is_empty() {
                     "Check that this command starts an MCP server that speaks JSON-RPC on stdout".to_string()
@@ -354,7 +400,7 @@ async fn open(transport: &Transport, span: &Span, tracer: &Arc<Tracer>, cancel: 
             let config = http_config(url, headers)?;
             install_crypto_provider();
             let client = StreamableHttpClientTransport::from_config(config);
-            initialize(client, tracer, cancel).await.map_err(|e| {
+            initialize(client, tracer, cancel, timeout).await.map_err(|e| {
                 Error::Mcp(format!(
                     "could not connect to the MCP server at {url}: {e}. Check the URL (it usually ends in `/mcp`), that the server is running, and any required headers such as Authorization"
                 ))
@@ -373,7 +419,8 @@ fn spawn(
     stderr: &Arc<Mutex<VecDeque<String>>>,
 ) -> Result<TokioChildProcess> {
     let mut cmd = tokio::process::Command::new(command);
-    cmd.args(args).envs(env);
+    // Never leave the server running if the session is dropped without a clean close.
+    cmd.args(args).envs(env).kill_on_drop(true);
     if let Some(cwd) = cwd.filter(|c| !c.is_empty()) {
         cmd.current_dir(cwd);
     }
@@ -390,21 +437,41 @@ fn spawn(
         Error::Mcp(format!("could not start `{shown}`: {reason}"))
     })?;
     if let Some(output) = output {
-        let span = span.clone();
-        let stderr = stderr.clone();
-        tokio::spawn(async move {
-            let mut lines = tokio::io::BufReader::new(output).lines();
-            while let Ok(Some(line)) = lines.next_line().await {
-                span.log(Level::Info, format!("stderr: {line}"));
-                let mut kept = stderr.lock().expect("stderr lock poisoned");
-                if kept.len() == STDERR_LINES {
-                    kept.pop_front();
-                }
-                kept.push_back(line);
-            }
-        });
+        tokio::spawn(forward_stderr(output, span.clone(), stderr.clone()));
     }
     Ok(child)
+}
+
+/// Shows a server's stderr on the session span and keeps the last lines.
+/// Reads until the server closes it, whatever it writes (very long lines or
+/// invalid UTF-8): a server blocks once its stderr pipe is full.
+async fn forward_stderr(mut output: impl tokio::io::AsyncRead + Unpin, span: Span, kept: Arc<Mutex<VecDeque<String>>>) {
+    let mut chunk = [0u8; 8192];
+    let mut line: Vec<u8> = Vec::new();
+    let emit = |bytes: &[u8]| {
+        let text = String::from_utf8_lossy(bytes).trim_end_matches(['\r', '\n']).to_string();
+        span.log(Level::Info, format!("stderr: {text}"));
+        let mut kept = kept.lock().expect("stderr lock poisoned");
+        if kept.len() == STDERR_LINES {
+            kept.pop_front();
+        }
+        kept.push_back(text);
+    };
+    while let Ok(read) = output.read(&mut chunk).await {
+        if read == 0 {
+            break;
+        }
+        for &byte in &chunk[..read] {
+            line.push(byte);
+            if byte == b'\n' || line.len() >= STDERR_LINE_BYTES {
+                emit(&line);
+                line.clear();
+            }
+        }
+    }
+    if !line.is_empty() {
+        emit(&line);
+    }
 }
 
 fn http_config(url: &str, headers: &[(String, String)]) -> Result<StreamableHttpClientTransportConfig> {
@@ -431,33 +498,39 @@ fn install_crypto_provider() {
     }
 }
 
-async fn initialize<T>(transport: T, tracer: &Arc<Tracer>, cancel: &CancellationToken) -> std::result::Result<Client, String>
+async fn initialize<T>(
+    transport: T,
+    tracer: &Arc<Tracer>,
+    cancel: &CancellationToken,
+    timeout: Duration,
+) -> std::result::Result<Client, String>
 where
     T: RmcpTransport<RoleClient> + 'static,
 {
     let traced = Traced::new(transport, tracer.clone());
     let start = serve_client_with_lifecycle_and_ct(client_config(), traced, ClientLifecycleMode::Initialize, cancel.clone());
-    match tokio::time::timeout(CONNECT_TIMEOUT, start).await {
+    match tokio::time::timeout(timeout, start).await {
         Ok(Ok(client)) => Ok(client),
         Ok(Err(e)) => Err(e.to_string()),
         Err(_) => {
             cancel.cancel();
-            Err(format!("no answer within {} seconds", CONNECT_TIMEOUT.as_secs()))
+            Err(format!("no answer within {}", show_duration(timeout)))
         }
     }
 }
 
 /// Reads the server's identity and lists what it offers. Lists the server
 /// does not support are left empty (and logged), never fatal.
-async fn describe(id: &str, options: &ConnectOptions, span: &Span, peer: &Peer<RoleClient>) -> SessionInfo {
+async fn describe(id: &str, options: &ConnectOptions, span: &Span, peer: &Peer<RoleClient>, timeout: Duration) -> SessionInfo {
     let peer_info = peer.peer_info();
     let server = peer_info.as_deref().and_then(|p| p.server_info.clone());
     let server_name = server.as_ref().map(|s| s.name.clone()).unwrap_or_default();
     let capabilities = peer_info.as_deref().map(|p| p.capabilities.clone()).unwrap_or_default();
 
-    let tools = if capabilities.tools.is_some() { list(span, "tools", peer.list_all_tools()).await } else { Vec::new() };
-    let resources = if capabilities.resources.is_some() { list(span, "resources", peer.list_all_resources()).await } else { Vec::new() };
-    let prompts = if capabilities.prompts.is_some() { list(span, "prompts", peer.list_all_prompts()).await } else { Vec::new() };
+    let tools = if capabilities.tools.is_some() { list(span, "tools", timeout, peer.list_all_tools()).await } else { Vec::new() };
+    let resources =
+        if capabilities.resources.is_some() { list(span, "resources", timeout, peer.list_all_resources()).await } else { Vec::new() };
+    let prompts = if capabilities.prompts.is_some() { list(span, "prompts", timeout, peer.list_all_prompts()).await } else { Vec::new() };
 
     SessionInfo {
         id: id.to_string(),
@@ -478,11 +551,20 @@ async fn describe(id: &str, options: &ConnectOptions, span: &Span, peer: &Peer<R
     }
 }
 
-async fn list<T: Serialize>(span: &Span, what: &str, request: impl Future<Output = Result<Vec<T>, rmcp::ServiceError>>) -> Vec<Value> {
-    match request.await {
-        Ok(items) => items.iter().filter_map(|item| serde_json::to_value(item).ok()).collect(),
-        Err(e) => {
+async fn list<T: Serialize>(
+    span: &Span,
+    what: &str,
+    timeout: Duration,
+    request: impl Future<Output = Result<Vec<T>, rmcp::ServiceError>>,
+) -> Vec<Value> {
+    match tokio::time::timeout(timeout, request).await {
+        Ok(Ok(items)) => items.iter().filter_map(|item| serde_json::to_value(item).ok()).collect(),
+        Ok(Err(e)) => {
             span.log(Level::Warn, format!("Could not list {what}: {e}"));
+            Vec::new()
+        }
+        Err(_) => {
+            span.log(Level::Warn, format!("Could not list {what}: no answer within {}", show_duration(timeout)));
             Vec::new()
         }
     }
@@ -507,5 +589,39 @@ async fn watch(engine: Arc<Engine>, sessions: Sessions, id: String, client: Clie
         _ if cancel.is_cancelled() => span.finish_ok(None, None),
         Ok(_) => span.finish_error("the MCP server closed the connection"),
         Err(e) => span.finish_error(format!("the MCP session stopped unexpectedly: {e}")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use post_tester_core::events::{EventBus, EventKind};
+
+    #[tokio::test]
+    async fn stderr_is_read_to_the_end_in_bounded_lines() {
+        let bus = EventBus::default();
+        let span = Span::start(&bus, Source::User, None, SpanKind::McpCall, "MCP test", Summary::default());
+        let kept = Arc::new(Mutex::new(VecDeque::new()));
+        let mut output = b"starting\n\xff\xfe broken utf-8\r\n".to_vec();
+        output.extend(std::iter::repeat_n(b'x', STDERR_LINE_BYTES * 2 + 10));
+        output.extend(b"\nlast words");
+        forward_stderr(output.as_slice(), span.clone(), kept.clone()).await;
+
+        let kept: Vec<String> = kept.lock().unwrap().iter().cloned().collect();
+        assert_eq!(kept.len(), 6, "{kept:?}");
+        assert_eq!(kept[0], "starting");
+        assert_eq!(kept[1], "\u{fffd}\u{fffd} broken utf-8");
+        assert!(kept[2..4].iter().all(|l| l.len() == STDERR_LINE_BYTES));
+        assert_eq!(kept[4], "x".repeat(10));
+        assert_eq!(kept[5], "last words");
+        let logs = bus.span_events(span.id()).iter().filter(|e| matches!(e.kind, EventKind::Log { .. })).count();
+        assert_eq!(logs, 6);
+    }
+
+    #[test]
+    fn durations_read_naturally() {
+        assert_eq!(show_duration(Duration::from_millis(250)), "250 ms");
+        assert_eq!(show_duration(Duration::from_secs(60)), "60 seconds");
+        assert_eq!(show_duration(Duration::from_secs(300)), "5 minutes");
     }
 }

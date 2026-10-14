@@ -7,7 +7,7 @@
 //!   way out is through the host functions below, which check permissions.
 
 use crate::manifest::Permission;
-use crate::transpile::to_javascript;
+use crate::transpile::{LineMap, transpile};
 use base64::Engine as _;
 use hmac::{Hmac, Mac};
 use post_tester_core::Engine;
@@ -20,8 +20,9 @@ use rquickjs::prelude::Async;
 use rquickjs::{AsyncContext, AsyncRuntime, CatchResultExt, Ctx, Function, Module, Object, Promise, Value};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, Instant};
 use tokio_util::sync::CancellationToken;
@@ -34,6 +35,10 @@ pub const TESTING_NAME: &str = "@post-tester/plugin-sdk/testing";
 
 const MEMORY_LIMIT: usize = 64 * 1024 * 1024;
 const STACK_LIMIT: usize = 1024 * 1024;
+/// Longest log line kept from a plugin or script.
+const MAX_LOG_TEXT: usize = 16 * 1024;
+/// Largest file `ctx.fs.read` returns.
+const MAX_FS_READ: u64 = (MEMORY_LIMIT / 4) as u64;
 
 /// What the code in a sandbox may do, and where its output goes.
 #[derive(Debug)]
@@ -120,7 +125,14 @@ pub struct Sandbox {
     epoch: Instant,
     timeout: Duration,
     lock: tokio::sync::Mutex<()>,
+    /// Line maps of transpiled TypeScript modules, by module path.
+    line_maps: LineMaps,
+    /// Set when a call was stopped (time limit) or abandoned midway: work it
+    /// started may still be pending inside the runtime.
+    disturbed: AtomicBool,
 }
+
+type LineMaps = Arc<Mutex<HashMap<String, LineMap>>>;
 
 impl std::fmt::Debug for Sandbox {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -146,7 +158,9 @@ impl Sandbox {
                 .await;
         }
         let root = module_root.map(|r| r.canonicalize().unwrap_or(r));
-        runtime.set_loader(ModuleLoader { root: root.clone() }, ModuleLoader { root }).await;
+        let line_maps = LineMaps::default();
+        let loader = ModuleLoader { root, line_maps: line_maps.clone() };
+        runtime.set_loader(loader.clone(), loader).await;
         let context = AsyncContext::full(&runtime).await.map_err(|e| e.to_string())?;
 
         let host_state = state.clone();
@@ -157,11 +171,28 @@ impl Sandbox {
             })
             .await?;
 
-        Ok(Self { _runtime: runtime, context, state, deadline, epoch, timeout, lock: tokio::sync::Mutex::new(()) })
+        Ok(Self {
+            _runtime: runtime,
+            context,
+            state,
+            deadline,
+            epoch,
+            timeout,
+            lock: tokio::sync::Mutex::new(()),
+            line_maps,
+            disturbed: AtomicBool::new(false),
+        })
     }
 
     pub fn state(&self) -> &HostState {
         &self.state
+    }
+
+    /// True when a call was stopped by the time limit or abandoned before it
+    /// finished. Such a sandbox still works, but code from that call may
+    /// still be pending in it; throw-away sandboxes (scripts) are replaced.
+    pub fn disturbed(&self) -> bool {
+        self.disturbed.load(Ordering::Relaxed)
     }
 
     /// Runs `f` with the call's span attached and the time limit armed.
@@ -170,15 +201,34 @@ impl Sandbox {
         *self.state.current_span.lock().expect("span lock poisoned") = span.cloned();
         let limit_ms = self.epoch.elapsed().as_millis() as u64 + self.timeout.as_millis() as u64;
         self.deadline.store(limit_ms, Ordering::Relaxed);
+        // If this future is dropped midway (e.g. the request was cancelled), the guard marks the sandbox.
+        let mut call = CallGuard { sandbox: self, finished: false };
         let result = tokio::time::timeout(self.timeout, f).await;
+        call.finished = true;
+        drop(call);
         self.deadline.store(0, Ordering::Relaxed);
         *self.state.current_span.lock().expect("span lock poisoned") = None;
-        let timed_out = || format!("{} took longer than {} ms and was stopped", self.state.label, self.timeout.as_millis());
+        // An interrupted call fails with QuickJS's "interrupted" error; tell it
+        // apart from errors the code throws itself by checking the clock.
+        let past_deadline = self.epoch.elapsed().as_millis() as u64 >= limit_ms;
         match result {
-            Ok(Err(e)) if e.contains("interrupted") => Err(timed_out()),
-            Ok(result) => result,
-            Err(_) => Err(timed_out()),
+            Ok(Ok(value)) => Ok(value),
+            Ok(Err(e)) if !past_deadline => Err(self.map_positions(&e)),
+            _ => {
+                self.disturbed.store(true, Ordering::Relaxed);
+                Err(format!("{} took longer than {} ms and was stopped", self.state.label, self.timeout.as_millis()))
+            }
         }
+    }
+
+    /// Rewrites `file.ts:line:column` positions in an error from the
+    /// generated JavaScript back to the TypeScript source.
+    fn map_positions(&self, message: &str) -> String {
+        let maps = self.line_maps.lock().expect("line map lock poisoned");
+        if maps.is_empty() {
+            return message.to_string();
+        }
+        message.lines().map(|line| map_frame(line, &maps)).collect::<Vec<_>>().join("\n")
     }
 
     /// Imports a module file and stores its default export as the plugin.
@@ -285,6 +335,36 @@ fn clean_error(message: &str) -> String {
     message.lines().filter(|l| !internal(l)).collect::<Vec<_>>().join("\n").trim().to_string()
 }
 
+/// Marks the sandbox as disturbed if a call is dropped before it completes.
+struct CallGuard<'a> {
+    sandbox: &'a Sandbox,
+    finished: bool,
+}
+
+impl Drop for CallGuard<'_> {
+    fn drop(&mut self) {
+        if !self.finished {
+            self.sandbox.disturbed.store(true, Ordering::Relaxed);
+            self.sandbox.deadline.store(0, Ordering::Relaxed);
+        }
+    }
+}
+
+/// Maps the position in one stack frame, e.g. `    at run (/p/index.ts:12:5)`.
+fn map_frame(line: &str, maps: &HashMap<String, LineMap>) -> String {
+    for (path, map) in maps {
+        let Some(at) = line.find(&format!("{path}:")) else { continue };
+        let position = &line[at + path.len() + 1..];
+        let end = position.find(|c: char| !c.is_ascii_digit() && c != ':').unwrap_or(position.len());
+        let Some((row, column)) = position[..end].split_once(':') else { continue };
+        let (Ok(row), Ok(column)) = (row.parse::<u32>(), column.parse::<u32>()) else { continue };
+        if let Some((row, column)) = map.lookup(row, column) {
+            return format!("{}{path}:{row}:{column}{}", &line[..at], &position[end..]);
+        }
+    }
+    line.to_string()
+}
+
 // ── Host functions ───────────────────────────────────────────────────────────
 
 fn ok(value: impl Serialize) -> String {
@@ -315,6 +395,7 @@ fn register_host_functions<'js>(ctx: &Ctx<'js>, state: Arc<HostState>) -> rquick
                 "error" => Level::Error,
                 _ => Level::Info,
             };
+            let text = truncate(text, MAX_LOG_TEXT);
             match s.span() {
                 Some(span) => span.log(level, format!("[{}] {text}", s.label)),
                 None => tracing::info!(plugin = %s.label, "{text}"),
@@ -415,6 +496,13 @@ fn register_host_functions<'js>(ctx: &Ctx<'js>, state: Arc<HostState>) -> rquick
         Function::new(ctx.clone(), move |path: String| {
             envelope(s.require(&Permission::FsRead).and_then(|()| {
                 let full = resolve_fs_path(&s, &path)?;
+                let size = std::fs::metadata(&full).map_err(|e| format!("cannot read `{path}`: {e}"))?.len();
+                if size > MAX_FS_READ {
+                    return Err(format!(
+                        "cannot read `{path}`: the file is too large ({size} bytes; the limit is {} MB)",
+                        MAX_FS_READ >> 20
+                    ));
+                }
                 std::fs::read_to_string(&full).map_err(|e| format!("cannot read `{path}`: {e}"))
             }))
         })?,
@@ -435,6 +523,20 @@ fn register_host_functions<'js>(ctx: &Ctx<'js>, state: Arc<HostState>) -> rquick
     )?;
 
     ctx.globals().set("__host", host)
+}
+
+/// Cuts `text` to at most `max` bytes (on a character boundary), saying so.
+fn truncate(mut text: String, max: usize) -> String {
+    if text.len() > max {
+        let total = text.len();
+        let mut end = max;
+        while !text.is_char_boundary(end) {
+            end -= 1;
+        }
+        text.truncate(end);
+        text.push_str(&format!("… ({total} bytes, truncated)"));
+    }
+    text
 }
 
 /// Resolves a path for `ctx.fs`, refusing anything outside the root.
@@ -465,30 +567,70 @@ struct HttpCall {
     headers: Vec<(String, String)>,
     body: String,
     timeout_ms: u64,
+    #[serde(default = "follow_by_default")]
+    follow_redirects: bool,
 }
 
+fn follow_by_default() -> bool {
+    true
+}
+
+/// How many redirects `ctx.http` follows.
+const MAX_REDIRECTS: u32 = 10;
+/// Largest response body handed to JavaScript. The sandbox heap could not hold more anyway.
+const MAX_HTTP_BODY: usize = MEMORY_LIMIT / 4;
+
+/// `ctx.http`: one request, plus redirects. Redirects are followed here rather
+/// than by the HTTP client so every hop's host is checked against the
+/// plugin's network permissions; otherwise an allowed host could redirect a
+/// request (with its body) to any other host.
 async fn host_http(state: &HostState, json: &str) -> Result<serde_json::Value, String> {
     let call: HttpCall = serde_json::from_str(json).map_err(|e| e.to_string())?;
     let url = url::Url::parse(&call.url).map_err(|e| format!("invalid URL `{}`: {e}", call.url))?;
-    let host = url.host_str().unwrap_or_default().to_string();
-    state.require(&Permission::Network(host.to_ascii_lowercase()))?;
+    state.require(&Permission::Network(url.host_str().unwrap_or_default().to_ascii_lowercase()))?;
     let engine = state.engine()?;
 
     let summary =
         Summary { protocol: Some("http".into()), method: Some(call.method.clone()), url: Some(call.url.clone()), request_id: None };
     let title = format!("{}: {} {}", state.label, call.method, call.url);
-    let span = match state.span() {
-        Some(parent) => Span::start(engine.bus(), state.source.clone(), Some(parent.id()), SpanKind::Request, title, summary),
-        None => Span::start(engine.bus(), state.source.clone(), None, SpanKind::Request, title, summary),
-    };
-    let request = PreparedRequest {
+    let span = Span::start(engine.bus(), state.source.clone(), state.span().map(|parent| parent.id()), SpanKind::Request, title, summary);
+    let mut request = PreparedRequest {
         method: call.method,
         url,
         headers: call.headers,
         body: call.body.into_bytes().into(),
-        options: RequestOptions { timeout_ms: call.timeout_ms, ..Default::default() },
+        options: RequestOptions { timeout_ms: call.timeout_ms, follow_redirects: false, ..Default::default() },
     };
-    match http::send(request, &span, Some(engine.cookies()), &CancellationToken::new()).await {
+    let started = Instant::now();
+    let mut redirects = 0;
+    let result = loop {
+        let response = match http::send(request.clone(), &span, Some(engine.cookies()), &CancellationToken::new()).await {
+            Ok(response) => response,
+            Err(e) => break Err(e.to_string()),
+        };
+        let next = if call.follow_redirects { redirect_target(&request, &response) } else { None };
+        let Some(next) = next else { break Ok(response) };
+        if redirects == MAX_REDIRECTS {
+            break Err(format!("too many redirects (more than {MAX_REDIRECTS})"));
+        }
+        let host = next.url.host_str().unwrap_or_default().to_ascii_lowercase();
+        if let Err(e) = state.require(&Permission::Network(host)) {
+            break Err(format!("{} {} redirected to {}: {e}", response.status, request.url, next.url));
+        }
+        redirects += 1;
+        span.log(Level::Info, format!("Redirect {} → {}", response.status, next.url));
+        request = next;
+    };
+    match result {
+        Ok(response) if response.body.len() > MAX_HTTP_BODY => {
+            let error = format!(
+                "the response body is too large for a plugin ({} bytes; the limit is {} MB)",
+                response.body.len(),
+                MAX_HTTP_BODY / (1024 * 1024)
+            );
+            span.finish_error(&error);
+            Err(error)
+        }
         Ok(response) => {
             span.finish_ok(Some(response.status), Some(response.body.len() as u64));
             Ok(serde_json::json!({
@@ -496,25 +638,51 @@ async fn host_http(state: &HostState, json: &str) -> Result<serde_json::Value, S
                 "status_text": response.status_text,
                 "headers": response.headers,
                 "body": String::from_utf8_lossy(&response.body),
-                "time_ms": post_tester_core::events::millis(response.total),
+                "time_ms": post_tester_core::events::millis(started.elapsed()),
+                "url": request.url.as_str(),
             }))
         }
         Err(e) => {
             span.finish_error(&e);
-            Err(e.to_string())
+            Err(e)
         }
     }
 }
 
+/// The follow-up request for a 3xx response, like a browser makes it.
+fn redirect_target(request: &PreparedRequest, response: &post_tester_core::http::Response) -> Option<PreparedRequest> {
+    if !matches!(response.status, 301 | 302 | 303 | 307 | 308) {
+        return None;
+    }
+    let url = request.url.join(response.header("location")?).ok()?;
+    let mut next = request.clone();
+    // 303 always becomes GET; 301/302 turn POST into GET.
+    if response.status == 303 || (matches!(response.status, 301 | 302) && request.method == "POST") {
+        next.method = "GET".into();
+        next.body = Default::default();
+        next.headers.retain(|(k, _)| !k.eq_ignore_ascii_case("content-type") && !k.eq_ignore_ascii_case("content-length"));
+    }
+    if url.origin() != request.url.origin() {
+        // Never pass credentials on to another site.
+        next.headers.retain(|(k, _)| !k.eq_ignore_ascii_case("authorization") && !k.eq_ignore_ascii_case("cookie"));
+    }
+    next.url = url;
+    Some(next)
+}
+
 // ── Module loading ──────────────────────────────────────────────────────────
 
-/// Resolves and loads `import`s: the SDK modules, and relative files inside the plugin folder.
+/// Resolves and loads `import`s: the SDK modules, and relative files inside
+/// the plugin folder. Without a root (request scripts) no files can be imported.
+#[derive(Clone)]
 struct ModuleLoader {
     root: Option<PathBuf>,
+    line_maps: LineMaps,
 }
 
 impl ModuleLoader {
     fn find_file(&self, base: &str, name: &str) -> Option<PathBuf> {
+        let root = self.root.as_ref()?;
         let candidate =
             if Path::new(name).is_absolute() { PathBuf::from(name) } else { Path::new(base).parent().unwrap_or(Path::new("")).join(name) };
         let candidates = [
@@ -525,10 +693,7 @@ impl ModuleLoader {
             candidate.join("index.js"),
         ];
         let found = candidates.into_iter().find(|p| p.is_file())?.canonicalize().ok()?;
-        match &self.root {
-            Some(root) if !found.starts_with(root) => None,
-            _ => Some(found),
-        }
+        found.starts_with(root).then_some(found)
     }
 }
 
@@ -550,7 +715,9 @@ impl Resolver for ModuleLoader {
         Err(rquickjs::Error::new_resolving_message(
             base,
             name,
-            if relative_or_absolute {
+            if self.root.is_none() {
+                format!("scripts cannot import files; only `{SDK_NAME}` is available")
+            } else if relative_or_absolute {
                 "file not found inside the plugin folder".to_string()
             } else {
                 format!("only relative imports and `{SDK_NAME}` are supported; bundle npm packages into your plugin (e.g. with esbuild)")
@@ -569,10 +736,16 @@ impl Loader for ModuleLoader {
         let source = match name {
             SDK_NAME => SDK_MODULE.to_string(),
             TESTING_NAME => TESTING_MODULE.to_string(),
-            path => {
+            // Only paths returned by `resolve` (inside the root) get here.
+            path if self.root.is_some() => {
                 let text = std::fs::read_to_string(path).map_err(|e| rquickjs::Error::new_loading_message(name, e.to_string()))?;
-                to_javascript(Path::new(path), &text).map_err(|e| rquickjs::Error::new_loading_message(name, e))?
+                let (code, map) = transpile(Path::new(path), &text).map_err(|e| rquickjs::Error::new_loading_message(name, e))?;
+                if let Some(map) = map {
+                    self.line_maps.lock().expect("line map lock poisoned").insert(path.to_string(), map);
+                }
+                code
             }
+            _ => return Err(rquickjs::Error::new_loading_message(name, "scripts cannot import files")),
         };
         Module::declare(ctx.clone(), name, source)
     }
@@ -589,6 +762,19 @@ mod tests {
         assert!(network_allows("*.example.com", "a.example.com"));
         assert!(!network_allows("*.example.com", "example.com.evil.dev"));
         assert!(!network_allows("api.github.com", "github.com"));
+    }
+
+    #[test]
+    fn frames_are_mapped_to_typescript_lines() {
+        let source = "// comment\n\nexport const f = (): number => {\n  throw new Error(\"x\");\n};\n";
+        let (js, map) = transpile(Path::new("/p (x)/index.ts"), source).unwrap();
+        let (row, column) = js.lines().enumerate().find_map(|(i, l)| l.find("throw").map(|c| (i + 1, c + 1))).unwrap();
+        let maps = HashMap::from([("/p (x)/index.ts".to_string(), map.unwrap())]);
+        let frame = |text: &str| map_frame(&text.replace("ROW", &row.to_string()).replace("COL", &column.to_string()), &maps);
+        assert_eq!(frame("    at f (/p (x)/index.ts:ROW:COL)"), "    at f (/p (x)/index.ts:4:3)");
+        assert_eq!(frame("    at /p (x)/index.ts:ROW:COL"), "    at /p (x)/index.ts:4:3");
+        assert_eq!(frame("    at g (/other.ts:ROW:COL)"), format!("    at g (/other.ts:{row}:{column})"));
+        assert_eq!(frame("no position here"), "no position here");
     }
 
     #[test]

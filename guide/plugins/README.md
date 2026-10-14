@@ -62,7 +62,7 @@ The code may be split into several files and imported with relative paths
 | `displayName` | no | Name shown in the app (defaults to `name`) |
 | `description` | yes | One sentence describing what the plugin does; must not be empty |
 | `version` | yes | `MAJOR.MINOR.PATCH`, e.g. `1.2.0` (a `-beta.1` or `+build` suffix is allowed) |
-| `engine` | yes | post-tester versions the plugin supports: `^0.1.0`, `>=0.1.0`, `0.1.0` or `*`. For `0.x`, `^` only matches the same minor version |
+| `engine` | yes | post-tester versions the plugin supports, as an npm-style range: `^0.1.0`, `~0.1.0`, `>=0.1.0`, `>=0.1.0 <1.0.0` (all must match), `^0.1.0 \|\| ^1.0.0` (either), `0.1.0` or `*`. For `0.x`, `^` only matches the same minor version. Hyphen ranges (`1.0.0 - 2.0.0`) are not supported |
 | `main` | yes | Entry file, relative to the plugin folder (no absolute paths, no `..`) |
 | `provides` | yes | At least one [plugin type](#5-plugin-types) |
 | `permissions` | yes | [Permissions](#8-permissions) the plugin needs; `[]` for none |
@@ -345,7 +345,11 @@ How agents see plugin tools:
 - Each tool is exposed by post-tester's MCP server as
   **`<plugin_name>__<tool>`**: the plugin name with `-` replaced by `_`, two
   underscores, then the tool's key. `create_ticket` in plugin `issue-tracker`
-  becomes `issue_tracker__create_ticket`.
+  becomes `issue_tracker__create_ticket`. Tool keys may only contain letters,
+  digits, `_` and `-`, and the full name must be at most 64 characters.
+- Results longer than 256 KB are cut before they reach the agent.
+- When post-tester's MCP server runs read-only, tools of plugins that declare
+  `fs:write` are hidden from agents.
 - Agents decide when to call a tool from its `description`, and fill the input
   from `inputSchema` (default `{ "type": "object" }`). Make both precise.
 - The input is **not** validated against the schema before `run`; check
@@ -397,6 +401,7 @@ Headers can be created from `[[name, value]]`, `[{ key, value }]` or `{ name: va
 | `headers` | `Headers` | Response headers |
 | `body` | `string` | Body as text (decompressed) |
 | `timeMs` | `number` | Total time in milliseconds |
+| `url` | `string` | The final URL, after redirects (`ctx.http` responses only) |
 | `text()` | `string` | The body |
 | `json()` | `any` | The body parsed as JSON; throws `the response body is not valid JSON: ...` |
 
@@ -424,15 +429,18 @@ and appears in Live Activity.
 
 Details:
 
-- `ctx.http` options: `{ method, url, headers, body, json, timeoutMs }`. `json`
-  sends a JSON body and sets `Content-Type: application/json`. Redirects are
-  followed and cookies are shared with the app. A non-2xx status does **not**
+- `ctx.http` options: `{ method, url, headers, body, json, timeoutMs, followRedirects }`.
+  `json` sends a JSON body and sets `Content-Type: application/json`. Up to 10
+  redirects are followed, and each redirect target needs a `network:`
+  permission too; pass `followRedirects: false` to get the 3xx response
+  itself. Cookies are shared with the app. A non-2xx status does **not**
   throw; check `response.status`.
 - `ctx.variables.get` sees session variables, then the default environment,
   then workspace variables. Session variables last until post-tester restarts
   and are not written to files.
 - `ctx.fs` paths are relative to the workspace folder; absolute paths, `..`
   and symbolic links leading outside it are refused. Both functions are synchronous.
+- Log messages longer than 16 KB are cut.
 - `ctx.crypto` works on text (UTF-8). For other algorithms, such as
   HMAC-SHA1, implement them in the plugin (see `totp-generator`).
 
@@ -530,6 +538,7 @@ Plugins run in a sandboxed JavaScript engine (QuickJS), separately for each plug
 | Memory | 64 MB per plugin |
 | Time | 30 s per call (template function, hook, import, tool call, ...); longer calls are stopped |
 | Concurrency | One call at a time per plugin |
+| Data | `ctx.fs.read` files and `ctx.http` response bodies up to 16 MB |
 | Imports | Relative paths inside the plugin folder (`./util`, `./util.ts`, `./lib/index.ts`) and `@post-tester/plugin-sdk` / `@post-tester/plugin-sdk/testing` |
 
 - **npm packages cannot be imported directly.** Bundle them into your plugin
@@ -537,6 +546,10 @@ Plugins run in a sandboxed JavaScript engine (QuickJS), separately for each plug
   at the bundle.
 - Available: standard JavaScript built-ins (`JSON`, `Math`, `Date`, `RegExp`,
   `Map`, `Promise`, `BigInt`, ...), `atob` / `btoa`, `queueMicrotask` and `console`.
+- Each plugin has its own engine: plugins cannot see or change each other's
+  globals. The globals post-tester provides (`ctx`, `console`) are read-only.
+- Stack traces in errors point at lines in your `.ts` files, even though they
+  are converted to JavaScript before running.
 - Not available: `fetch`, `URL`, `URLSearchParams`, `TextEncoder` /
   `TextDecoder`, `setTimeout`, `Intl`, `crypto`, `require`, `process`. Use `ctx` instead.
 

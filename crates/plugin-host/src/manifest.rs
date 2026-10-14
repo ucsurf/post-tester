@@ -138,14 +138,24 @@ impl Manifest {
         if parse_version(&self.version).is_none() {
             problem("version", format!("`{}` is not a semantic version", self.version), "use MAJOR.MINOR.PATCH, e.g. \"1.0.0\"");
         }
-        if !engine_matches(&self.engine, post_tester_core::VERSION) {
-            problem(
+        match check_engine(&self.engine, post_tester_core::VERSION) {
+            Ok(true) => {}
+            Ok(false) => problem(
                 "engine",
                 format!("`{}` does not include this post-tester version ({})", self.engine, post_tester_core::VERSION),
                 &format!("use a range that includes {}, e.g. \"^{}\"", post_tester_core::VERSION, post_tester_core::VERSION),
-            );
+            ),
+            Err(message) => problem(
+                "engine",
+                message,
+                "use `^x.y.z`, `~x.y.z`, `>=x.y.z`, `>=x.y.z <a.b.c`, `x.y.z`, `*`, or alternatives separated by `||`",
+            ),
         }
-        if self.main.contains("..") || Path::new(&self.main).is_absolute() {
+        let main = Path::new(&self.main);
+        if self.main.trim().is_empty()
+            || main.is_absolute()
+            || main.components().any(|c| !matches!(c, std::path::Component::Normal(_) | std::path::Component::CurDir))
+        {
             problem("main", format!("`{}` must be a file inside the plugin folder", self.main), "use a relative path like \"index.ts\"");
         }
         if self.provides.is_empty() {
@@ -186,33 +196,180 @@ fn is_host_pattern(host: &str) -> bool {
     !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '.')
 }
 
-fn parse_version(text: &str) -> Option<(u64, u64, u64)> {
-    let core = text.split(['-', '+']).next()?;
-    let mut parts = core.split('.').map(|p| p.parse::<u64>().ok());
-    let version = (parts.next()??, parts.next()??, parts.next()??);
-    parts.next().is_none().then_some(version)
+/// A semantic version: `MAJOR.MINOR.PATCH`, with an optional pre-release
+/// (`-beta.1`) and build metadata (`+abc`, ignored).
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Version {
+    core: (u64, u64, u64),
+    /// Dot-separated pre-release identifiers; empty for a release.
+    pre: Vec<String>,
 }
 
-/// Supports `*`, exact versions, `>=x.y.z`, and caret ranges `^x.y.z` (with 0.x semantics).
-pub fn engine_matches(range: &str, version: &str) -> bool {
-    let range = range.trim();
-    let Some(v) = parse_version(version) else { return false };
-    if range == "*" {
-        return true;
+impl Version {
+    fn new(core: (u64, u64, u64)) -> Self {
+        Self { core, pre: Vec::new() }
     }
-    if let Some(min) = range.strip_prefix(">=").and_then(|r| parse_version(r.trim())) {
-        return v >= min;
+}
+
+impl Ord for Version {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        use std::cmp::Ordering;
+        self.core.cmp(&other.core).then_with(|| match (self.pre.is_empty(), other.pre.is_empty()) {
+            (true, true) => Ordering::Equal,
+            // A pre-release comes before its release: 1.0.0-beta < 1.0.0.
+            (true, false) => Ordering::Greater,
+            (false, true) => Ordering::Less,
+            (false, false) => {
+                for (a, b) in self.pre.iter().zip(&other.pre) {
+                    let order = match (a.parse::<u64>(), b.parse::<u64>()) {
+                        (Ok(a), Ok(b)) => a.cmp(&b),
+                        (Ok(_), Err(_)) => Ordering::Less,
+                        (Err(_), Ok(_)) => Ordering::Greater,
+                        (Err(_), Err(_)) => a.cmp(b),
+                    };
+                    if order != Ordering::Equal {
+                        return order;
+                    }
+                }
+                self.pre.len().cmp(&other.pre.len())
+            }
+        })
     }
-    let Some(min) = parse_version(range.trim_start_matches('^').trim_start_matches('=')) else { return false };
-    if !range.starts_with('^') {
-        return v == min;
+}
+
+impl PartialOrd for Version {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
     }
-    let compatible = match min {
-        (0, 0, patch) => v == (0, 0, patch),
-        (0, minor, _) => v.0 == 0 && v.1 == minor,
-        (major, _, _) => v.0 == major,
+}
+
+fn parse_version(text: &str) -> Option<Version> {
+    let text = text.split('+').next()?;
+    let (core, pre) = match text.split_once('-') {
+        Some((core, pre)) => (core, pre.split('.').map(str::to_string).collect::<Vec<_>>()),
+        None => (text, Vec::new()),
     };
-    compatible && v >= min
+    if pre.iter().any(|p| p.is_empty() || !p.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')) {
+        return None;
+    }
+    let mut parts = core.split('.').map(|p| if p.chars().all(|c| c.is_ascii_digit()) { p.parse::<u64>().ok() } else { None });
+    let version = (parts.next()??, parts.next()??, parts.next()??);
+    parts.next().is_none().then_some(Version { core: version, pre })
+}
+
+/// `x.y.z` with optional parts left out or written as `x`/`*`: the parts present, and the core with zeros.
+fn parse_partial(text: &str) -> Option<(usize, Version)> {
+    let wildcard = |p: &str| matches!(p, "x" | "X" | "*");
+    let core = text.split(['-', '+']).next()?;
+    let parts: Vec<&str> = core.split('.').collect();
+    let given = parts.iter().take_while(|p| !wildcard(p)).count();
+    if parts.len() > 3 || parts[given..].iter().any(|p| !wildcard(p)) {
+        return None;
+    }
+    if given == 3 {
+        return parse_version(text).map(|v| (3, v));
+    }
+    let mut numbers = [0u64; 3];
+    for (slot, part) in numbers.iter_mut().zip(&parts[..given]) {
+        *slot = part.parse().ok()?;
+    }
+    (text == core).then(|| (given, Version::new((numbers[0], numbers[1], numbers[2]))))
+}
+
+/// A lower or upper limit of a range, and whether the version itself is included.
+type Bound = Option<(Version, bool)>;
+
+/// One comparator, such as `>=1.2.0` or `^0.3`, as the (lower, upper) bounds it allows.
+fn comparator(text: &str) -> Result<(Bound, Bound), String> {
+    let invalid = || format!("`{text}` is not a version or a range");
+    let (op, rest) = ["^", "~", ">=", "<=", ">", "<", "="]
+        .iter()
+        .find_map(|op| text.strip_prefix(op).map(|rest| (*op, rest.trim_start())))
+        .unwrap_or(("", text));
+    let (given, version) = parse_partial(rest).ok_or_else(invalid)?;
+    let (major, minor, patch) = version.core;
+    let next = |given: usize| match given {
+        0 => None,
+        1 => Some(Version::new((major + 1, 0, 0))),
+        2 => Some(Version::new((major, minor + 1, 0))),
+        _ => Some(Version::new((major, minor, patch + 1))),
+    };
+    let at_least = Some((version.clone(), true));
+    let full = given == 3;
+    Ok(match op {
+        "" | "=" if full => (at_least, Some((version, true))),
+        // Partial versions are ranges: `1.2` means `>=1.2.0 <1.3.0`.
+        "" | "=" => (if given == 0 { None } else { at_least }, next(given).map(|v| (v, false))),
+        ">=" => (at_least, None),
+        ">" if full => (Some((version, false)), None),
+        ">" => (next(given).map(|v| (v, true)), None),
+        "<" => (None, Some((version, false))),
+        "<=" if full => (None, Some((version, true))),
+        "<=" => (None, next(given).map(|v| (v, false))),
+        // `~1.2.3` allows patch updates; `~1` allows minor updates.
+        "~" => (at_least, next(given.min(2)).map(|v| (v, false))),
+        // `^` allows changes that do not modify the left-most non-zero part.
+        _ => {
+            let upper = match (major, minor) {
+                (0, 0) if given == 3 => Version::new((0, 0, patch + 1)),
+                (0, _) if given >= 2 => Version::new((0, minor + 1, 0)),
+                _ if given == 0 => return Ok((None, None)),
+                _ => Version::new((major + 1, 0, 0)),
+            };
+            (at_least, Some((upper, false)))
+        }
+    })
+}
+
+/// True when `version` is in `range`. An invalid range or version never matches;
+/// see [`check_engine`] for the reason.
+pub fn engine_matches(range: &str, version: &str) -> bool {
+    check_engine(range, version).unwrap_or(false)
+}
+
+/// Checks `version` against an npm-style `range`: `*`, `x.y.z`, `^x.y.z` (with
+/// 0.x semantics), `~x.y.z`, comparators (`>=`, `>`, `<=`, `<`, `=`) combined
+/// with spaces (all must match), and alternatives separated by `||`.
+/// Pre-release versions (`1.0.0-beta.1`) only match ranges that name a
+/// pre-release of the same `x.y.z`, as in npm.
+pub fn check_engine(range: &str, version: &str) -> Result<bool, String> {
+    let version = parse_version(version.trim()).ok_or_else(|| format!("`{version}` is not a semantic version"))?;
+    if range.trim().is_empty() {
+        return Err("the version range is empty".into());
+    }
+    let mut matched = false;
+    for alternative in range.split("||") {
+        let comparators: Vec<&str> = alternative.split_whitespace().collect();
+        if comparators.is_empty() {
+            return Err(format!("`{range}` has an empty alternative around `||`"));
+        }
+        if comparators.contains(&"-") {
+            return Err(format!("hyphen ranges such as `{}` are not supported; use `>=a.b.c <=x.y.z`", alternative.trim()));
+        }
+        // Allow `>= 1.0.0` (an operator separated from its version).
+        let mut joined = Vec::new();
+        let mut pending: Option<&str> = None;
+        for part in comparators {
+            match pending.take() {
+                Some(op) => joined.push(format!("{op}{part}")),
+                None if ["^", "~", ">=", "<=", ">", "<", "="].contains(&part) => pending = Some(part),
+                None => joined.push(part.to_string()),
+            }
+        }
+        if let Some(op) = pending {
+            return Err(format!("`{op}` in `{range}` is not followed by a version"));
+        }
+        let mut all = true;
+        let mut names_prerelease_of_same_core = false;
+        for text in &joined {
+            let (lower, upper) = comparator(text)?;
+            all &= lower.as_ref().is_none_or(|(v, inclusive)| if *inclusive { version >= *v } else { version > *v });
+            all &= upper.as_ref().is_none_or(|(v, inclusive)| if *inclusive { version <= *v } else { version < *v });
+            names_prerelease_of_same_core |= [lower, upper].iter().flatten().any(|(v, _)| !v.pre.is_empty() && v.core == version.core);
+        }
+        matched |= all && (version.pre.is_empty() || names_prerelease_of_same_core);
+    }
+    Ok(matched)
 }
 
 #[cfg(test)]
@@ -254,11 +411,81 @@ mod tests {
     fn engine_ranges() {
         assert!(engine_matches("^0.1.0", "0.1.5"));
         assert!(!engine_matches("^0.1.0", "0.2.0"));
+        assert!(!engine_matches("^0.1.3", "0.1.2"));
+        assert!(engine_matches("^0.0.3", "0.0.3"));
+        assert!(!engine_matches("^0.0.3", "0.0.4"));
         assert!(engine_matches("^1.2.0", "1.9.0"));
         assert!(!engine_matches("^1.2.0", "2.0.0"));
+        assert!(engine_matches("^1", "1.9.9"));
+        assert!(engine_matches("^0.1", "0.1.9"));
         assert!(engine_matches(">=0.1.0", "3.0.0"));
+        assert!(engine_matches(">= 0.1.0", "3.0.0"));
         assert!(engine_matches("*", "0.0.1"));
         assert!(engine_matches("0.1.0", "0.1.0"));
+        assert!(!engine_matches("0.1.0", "0.1.1"));
+        assert!(engine_matches("=0.1.0", "0.1.0"));
+        assert!(engine_matches("0.1", "0.1.7"));
+        assert!(engine_matches("0.1.x", "0.1.7"));
+        assert!(!engine_matches("0.1.x", "0.2.0"));
+        // Tilde: patch updates only (minor updates for `~1`).
+        assert!(engine_matches("~1.2.3", "1.2.9"));
+        assert!(!engine_matches("~1.2.3", "1.3.0"));
+        assert!(engine_matches("~1", "1.5.0"));
+        // Comparator sets and alternatives.
+        assert!(engine_matches(">=0.1.0 <1.0.0", "0.9.9"));
+        assert!(!engine_matches(">=0.1.0 <1.0.0", "1.0.0"));
+        assert!(engine_matches(">0.1.0", "0.1.1"));
+        assert!(!engine_matches(">0.1.0", "0.1.0"));
+        assert!(engine_matches("<=1.2", "1.2.5"));
+        assert!(!engine_matches("<1.2", "1.2.0"));
+        assert!(engine_matches("^0.1.0 || ^1.0.0", "1.4.0"));
+        assert!(!engine_matches("^0.1.0 || ^1.0.0", "0.2.0"));
+        // Build metadata is ignored.
+        assert!(engine_matches("^1.0.0", "1.0.1+build.5"));
+    }
+
+    #[test]
+    fn engine_ranges_with_pre_releases() {
+        // A pre-release only matches ranges that mention a pre-release of the same version.
+        assert!(!engine_matches("^0.2.0", "0.2.0-beta.1"));
+        assert!(engine_matches("^0.2.0-alpha", "0.2.0-beta.1"));
+        assert!(engine_matches(">=0.2.0-beta.2", "0.2.0-beta.10"));
+        assert!(!engine_matches(">=0.2.0-beta.2", "0.2.0-beta.1"));
+        assert!(engine_matches(">=0.2.0-beta.2", "0.2.0"));
+        assert!(!engine_matches("<0.2.0", "0.2.0-beta.1"));
+        assert!(engine_matches(">=0.1.0", "0.2.0"));
+    }
+
+    #[test]
+    fn invalid_engine_ranges_say_why() {
+        for (range, reason) in [
+            ("", "empty"),
+            ("latest", "is not a version or a range"),
+            ("^1.2.3.4", "is not a version or a range"),
+            ("1.0.0 - 2.0.0", "hyphen ranges"),
+            ("^1.0.0 ||", "empty alternative"),
+            (">=", "not followed by a version"),
+        ] {
+            let error = check_engine(range, "1.0.0").unwrap_err();
+            assert!(error.contains(reason), "{range}: {error}");
+        }
+        let mut m = manifest();
+        m.engine = ">=0.1 <1 junk".into();
+        let problems = m.validate();
+        assert_eq!(problems.len(), 1, "{problems:#?}");
+        assert!(problems[0].message.contains("`junk` is not a version or a range"), "{}", problems[0]);
+    }
+
+    #[test]
+    fn main_must_stay_inside_the_plugin_folder() {
+        for main in ["../index.ts", "lib/../../index.ts", "/abs/index.ts", ""] {
+            let mut m = manifest();
+            m.main = main.into();
+            assert_eq!(m.validate().len(), 1, "{main}");
+        }
+        let mut m = manifest();
+        m.main = "./dist/index..min.js".into();
+        assert_eq!(m.validate(), vec![]);
     }
 
     #[test]

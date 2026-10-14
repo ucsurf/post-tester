@@ -35,6 +35,19 @@ async fn start_server() -> String {
         .route(
             "/status/{code}",
             get(|axum::extract::Path(code): axum::extract::Path<u16>| async move { StatusCode::from_u16(code).unwrap().into_response() }),
+        )
+        .route(
+            "/redirect",
+            get(|axum::extract::Query(query): axum::extract::Query<std::collections::HashMap<String, String>>| async move {
+                axum::response::Redirect::temporary(&query["to"])
+            }),
+        )
+        .route(
+            "/slow",
+            get(|| async {
+                tokio::time::sleep(Duration::from_millis(150)).await;
+                "slow"
+            }),
         );
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -673,4 +686,247 @@ async fn script_errors_are_reported_clearly() {
     let error = engine.send(&r, SendOptions::new(Source::User)).await.error.unwrap();
     assert!(error.contains("script error: syntax error in the script"), "{error}");
     assert!(!error.contains("eval_script"), "internal frames must not leak: {error}");
+}
+
+// ── Sandbox hardening ───────────────────────────────────────────────────────
+
+/// An allowed host must not be able to redirect a plugin's request to a host
+/// the plugin has no permission for.
+#[tokio::test]
+async fn redirects_are_checked_against_network_permissions() {
+    let base = start_server().await;
+    let port = base.rsplit(':').next().unwrap();
+    let (_engine, host) = common::host();
+    let dir = tempfile::tempdir().unwrap();
+    let fetch = r#"const res = await ctx.http.get(input.url, { followRedirects: input.follow });
+      return { status: res.status, url: res.url, body: res.status === 200 ? res.json() : null };"#;
+    let plugin = load(&host, &tool_plugin(dir.path(), "redirects", &["network:127.0.0.1"], fetch), &["network:127.0.0.1"]).await;
+
+    // Same host: followed.
+    let same = format!("{base}/redirect?to=/json");
+    let result = call_tool(&plugin, json!({ "url": same, "follow": true })).await.unwrap();
+    assert_eq!(result["status"], 200);
+    assert_eq!(result["url"], format!("{base}/json"));
+    assert_eq!(result["body"]["token"], "abc");
+
+    // Another host (`localhost` is not `127.0.0.1`): refused, with the reason.
+    let elsewhere = format!("{base}/redirect?to=http://localhost:{port}/json");
+    let error = call_tool(&plugin, json!({ "url": elsewhere, "follow": true })).await.unwrap_err();
+    assert!(error.contains("redirected to http://localhost") && error.contains("did not declare `network:localhost`"), "{error}");
+
+    // Not following: the redirect itself is returned.
+    let result = call_tool(&plugin, json!({ "url": elsewhere, "follow": false })).await.unwrap();
+    assert_eq!(result["status"], 307);
+
+    // With permission for both hosts, the redirect is followed.
+    let both = &["network:127.0.0.1", "network:localhost"];
+    let plugin = load(&host, &tool_plugin(dir.path(), "redirects-both", both, fetch), both).await;
+    let result = call_tool(&plugin, json!({ "url": elsewhere, "follow": true })).await.unwrap();
+    assert_eq!(result["body"]["token"], "abc");
+}
+
+#[tokio::test]
+async fn host_internals_are_hidden_and_read_only() {
+    let (engine, host) = common::host();
+    let dir = tempfile::tempdir().unwrap();
+    let probe = r#"
+      const replaced = [];
+      for (const name of ["__pt_call", "__pt_dispatch", "__pt_run_script", "ctx", "console"]) {
+        try { globalThis[name] = () => "hijacked"; } catch {}
+        if (globalThis[name] === undefined || String(globalThis[name]).includes("hijacked")) replaced.push(name);
+      }
+      return { host: typeof globalThis.__host, replaced };
+    "#;
+    let plugin = load(&host, &tool_plugin(dir.path(), "probe", &[], probe), &[]).await;
+    assert_eq!(call_tool(&plugin, json!({})).await.unwrap(), json!({ "host": "undefined", "replaced": [] }));
+    // The plugin still works after trying.
+    assert_eq!(call_tool(&plugin, json!({})).await.unwrap()["replaced"], json!([]));
+
+    // Scripts: the same, and globals one script creates do not reach the next one.
+    let first = r#"
+      pt.variables.set("host", typeof __host);
+      leaked = "from the first script";
+      globalThis.__pt_run_script = async () => "{}";
+    "#;
+    let output = host.run_script(ScriptPhase::BeforeRequest, first, script_input(), &span(&engine)).await.unwrap();
+    assert_eq!(output.set_variables, [("host".to_string(), "undefined".to_string())]);
+    let output = host
+        .run_script(ScriptPhase::BeforeRequest, r#"pt.variables.set("leaked", typeof leaked);"#, script_input(), &span(&engine))
+        .await
+        .unwrap();
+    assert_eq!(output.set_variables, [("leaked".to_string(), "undefined".to_string())]);
+}
+
+#[tokio::test]
+async fn scripts_cannot_import_files() {
+    let (engine, host) = common::host();
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("module.js");
+    std::fs::write(&file, "export const secret = 42;").unwrap();
+    let code = format!(
+        r#"try {{ const m = await import({path:?}); pt.variables.set("result", String(m.secret)); }}
+           catch (e) {{ pt.variables.set("result", String(e.message)); }}"#,
+        path = file.to_string_lossy()
+    );
+    let output = host.run_script(ScriptPhase::BeforeRequest, &code, script_input(), &span(&engine)).await.unwrap();
+    let result = &output.set_variables[0].1;
+    assert!(result.contains("scripts cannot import files"), "{result}");
+}
+
+#[tokio::test]
+async fn a_stopped_script_does_not_affect_the_next_one() {
+    let engine = common::engine();
+    let host = PluginHost::attach_with_timeout(&engine, Duration::from_millis(200));
+    let error =
+        host.run_script(ScriptPhase::BeforeRequest, "while (true) {}", script_input(), &span(&engine)).await.unwrap_err().to_string();
+    assert!(error.contains("took longer than 200 ms"), "{error}");
+    let error = host
+        .run_script(ScriptPhase::BeforeRequest, "await new Promise(() => {});", script_input(), &span(&engine))
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("took longer than 200 ms"), "{error}");
+    let output =
+        host.run_script(ScriptPhase::BeforeRequest, r#"pt.variables.set("ok", "yes");"#, script_input(), &span(&engine)).await.unwrap();
+    assert_eq!(output.set_variables, [("ok".to_string(), "yes".to_string())]);
+}
+
+/// Scripts of concurrent requests run in parallel sandboxes, each with its own data.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn concurrent_scripts_keep_their_own_data() {
+    let base = start_server().await;
+    let (engine, host) = common::host();
+    let mut tasks = Vec::new();
+    for i in 0..32 {
+        let (engine, host, base) = (engine.clone(), host.clone(), base.clone());
+        tasks.push(tokio::spawn(async move {
+            let mut input = script_input();
+            input.variables = vec![("n".into(), i.to_string())];
+            // A request inside the script, so scripts overlap in time.
+            let code = format!(
+                r#"const res = await pt.http.get("{base}/slow"); counter = (globalThis.counter ?? 0) + 1;
+                   pt.variables.set("seen", pt.variables.get("n") + ":" + res.text() + ":" + counter);"#
+            );
+            host.run_script(ScriptPhase::BeforeRequest, &code, input, &span(&engine)).await.unwrap().set_variables
+        }));
+    }
+    let started = std::time::Instant::now();
+    for (i, task) in tasks.into_iter().enumerate() {
+        assert_eq!(task.await.unwrap(), [("seen".to_string(), format!("{i}:slow:1"))]);
+    }
+    // 32 scripts that each wait 150 ms must not run one after another (4.8 s).
+    assert!(started.elapsed() < Duration::from_secs(3), "{:?}", started.elapsed());
+}
+
+#[tokio::test]
+async fn thrown_errors_that_mention_interruption_are_not_timeouts() {
+    let (_engine, host) = common::host();
+    let dir = tempfile::tempdir().unwrap();
+    let plugin =
+        load(&host, &tool_plugin(dir.path(), "thrower", &[], r#"throw new Error("upload interrupted by the server");"#), &[]).await;
+    let error = call_tool(&plugin, json!({})).await.unwrap_err();
+    assert!(error.contains("upload interrupted by the server") && !error.contains("took longer"), "{error}");
+}
+
+/// TypeScript is re-printed without comments and blank lines; stack traces
+/// must still point at the line in the user's file.
+#[tokio::test]
+async fn typescript_errors_point_at_the_source_line() {
+    let (_engine, host) = common::host();
+    let dir = tempfile::tempdir().unwrap();
+    let code = r#"// A plugin whose error is on line 12.
+import { definePlugin } from "@post-tester/plugin-sdk";
+
+/**
+ * A long comment that the TypeScript compiler removes.
+ */
+interface Input { name: string }
+
+export default definePlugin({
+  mcpTools: {
+    fail: { description: "Fails.", run: (input: Input) => {
+      throw new Error(`no user ${input.name}`);
+    } },
+  },
+});
+"#;
+    let dir = write_plugin(dir.path(), "lines", &["mcp-tool"], &[], code);
+    let plugin = load(&host, &dir, &[]).await;
+    let error = plugin.call(None, "mcpTool", "fail", json!({ "input": { "name": "ada" } })).await.unwrap_err().to_string();
+    assert!(error.contains("no user ada") && error.contains("index.ts:12:"), "{error}");
+}
+
+#[tokio::test]
+async fn postman_assertions_and_helpers() {
+    let base = start_server().await;
+    let (engine, _host) = common::host();
+    let script = format!(
+        r#"
+pm.test("ok is a 2xx status", () => pm.response.to.be.ok);
+pm.test("not equal", () => pm.expect(1).to.not.equal(2));
+pm.test("deep equal", () => pm.expect({{ a: [1] }}).to.deep.equal({{ a: [1] }}));
+pm.test("dates compare by value", () => pm.expect(new Date(1)).to.not.eql(new Date(2)));
+pm.test("json body path", () => pm.response.to.have.jsonBody("user.id", 7));
+pm.test("body text", () => pm.response.to.have.body('{{"token":"abc","user":{{"id":7}}}}'));
+pm.test("header", () => pm.response.to.have.header("content-type", "application/json"));
+pm.test("number includes", () => pm.expect(5).to.not.include(5));
+pm.test("async test keeps its place", async () => {{ await null; throw new Error("late failure"); }});
+pm.test("is a server error", () => pm.response.to.be.serverError);
+pm.variables.set("n", "7");
+pm.test("replaceIn", () => pm.expect(pm.variables.replaceIn("id={{{{n}}}} {{{{other}}}}")).to.equal("id=7 {{{{other}}}}"));
+pm.sendRequest("{base}/status/500", (err, res) => {{
+  pm.test("callback gets the response", () => pm.expect(res.code).to.equal(500));
+  pm.test("callback response helpers", () => res.to.be.serverError);
+}});
+"#
+    );
+    let mut r = request(json!({ "url": format!("{base}/json") }));
+    r.scripts.after_response = script;
+    let execution = engine.send(&r, SendOptions::new(Source::User)).await;
+    let tests: Vec<(&str, bool, Option<&str>)> = execution.tests.iter().map(|t| (t.name.as_str(), t.passed, t.detail.as_deref())).collect();
+    assert_eq!(
+        tests,
+        [
+            ("ok is a 2xx status", true, None),
+            ("not equal", true, None),
+            ("deep equal", true, None),
+            ("dates compare by value", true, None),
+            ("json body path", true, None),
+            ("body text", true, None),
+            ("header", true, None),
+            ("number includes", true, None),
+            ("async test keeps its place", false, Some("late failure")),
+            ("is a server error", false, Some("expected response to be a server error (5xx), got status 200")),
+            ("replaceIn", true, None),
+            ("callback gets the response", true, None),
+            ("callback response helpers", true, None),
+        ],
+        "{:?}",
+        execution.error
+    );
+
+    let mut r = request(json!({ "url": format!("{base}/status/404") }));
+    r.scripts.after_response = "pm.response.to.be.ok;".into();
+    let error = engine.send(&r, SendOptions::new(Source::User)).await.error.unwrap();
+    assert!(error.contains("expected response to be ok (2xx), got status 404"), "{error}");
+}
+
+fn script_input() -> ScriptInput {
+    ScriptInput {
+        request: ScriptRequest { method: "GET".into(), url: "https://example.com/".into(), headers: vec![], body: String::new() },
+        response: None,
+        variables: vec![],
+        environment: None,
+    }
+}
+
+#[tokio::test]
+async fn mcp_tool_names_must_be_valid_for_agents() {
+    let (_engine, host) = common::host();
+    let dir = tempfile::tempdir().unwrap();
+    let code = r#"export default { mcpTools: { "list users": { description: "Lists users.", run: () => [] } } };"#;
+    let plugin = write_plugin(dir.path(), "names", &["mcp-tool"], &[], code);
+    let problems = host.validate(&plugin).await;
+    assert_eq!(problems.len(), 1, "{}", show(&problems));
+    assert!(problems[0].message.contains("`list users` is not valid: agents see it as `names__list users`"), "{}", problems[0]);
 }

@@ -5,6 +5,7 @@
 //! requests it sends (as child spans).
 
 mod activity;
+mod redact;
 mod tools;
 
 use bytes::Bytes;
@@ -42,6 +43,11 @@ values: reference them. Use `save_request` only when the user wants a request cr
 
 /// Resource URIs for saved requests: `post-tester://requests/{id}`.
 const REQUEST_URI: &str = "post-tester://requests/";
+
+/// Tool results longer than this are cut, so one call cannot flood an agent's
+/// context (response bodies are already cut at 32 KB; this bounds everything
+/// else, such as plugin tool results and very large workspaces).
+const MAX_RESULT: usize = 256 * 1024;
 
 /// Server settings.
 #[derive(Debug, Clone, Default)]
@@ -81,7 +87,7 @@ impl McpServer {
             Ok(value) => {
                 message(&span, Direction::Sent, &value);
                 span.finish_ok(None, None);
-                CallToolResult::success(vec![ContentBlock::text(value.to_string())])
+                CallToolResult::success(vec![ContentBlock::text(limit(value.to_string(), MAX_RESULT))])
             }
             Err(error) => {
                 span.finish_error(&error);
@@ -133,6 +139,21 @@ impl McpServer {
     }
 }
 
+/// Cuts a result to at most `max` bytes (on a character boundary) and says so.
+fn limit(mut text: String, max: usize) -> String {
+    if text.len() <= max {
+        return text;
+    }
+    let total = text.len();
+    let mut end = max;
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    text.truncate(end);
+    text.push_str(&format!("\n[result truncated: showing the first {end} of {total} bytes]"));
+    text
+}
+
 /// True when a plugin may change files.
 fn writes(plugin: &post_tester_plugin_host::Plugin) -> bool {
     plugin.manifest.parsed_permissions().contains(&post_tester_plugin_host::manifest::Permission::FsWrite)
@@ -181,6 +202,13 @@ impl ServerHandler for McpServer {
     ) -> std::result::Result<CallToolResponse, McpError> {
         let name = request.name.to_string();
         if !tools::is_builtin(&name, self.plugins.is_some()) && self.plugin_tool(&name).is_none() {
+            let hidden = self.plugins.as_ref().is_some_and(|host| host.mcp_tools().iter().any(|(n, _, _)| *n == name));
+            if hidden {
+                let message = format!(
+                    "`{name}` is disabled: its plugin may change files (fs:write), and post-tester's MCP server runs in read-only mode"
+                );
+                return Ok(CallToolResult::error(vec![ContentBlock::text(message)]).into());
+            }
             return Err(McpError::invalid_params(format!("unknown tool `{name}`. Call tools/list to see the available tools"), None));
         }
         let arguments = Value::Object(request.arguments.unwrap_or_default());
@@ -230,4 +258,16 @@ pub fn http_service(
 ) -> StreamableHttpService<McpServer, LocalSessionManager> {
     let server = McpServer::new(engine, plugins, options);
     StreamableHttpService::new(move || Ok(server.clone()), Arc::default(), StreamableHttpServerConfig::default())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn long_results_are_cut_with_a_note() {
+        assert_eq!(limit("short".into(), 10), "short");
+        let cut = limit("é".repeat(10), 5);
+        assert!(cut.starts_with("éé\n[result truncated: showing the first 4 of 20 bytes]"), "{cut}");
+    }
 }

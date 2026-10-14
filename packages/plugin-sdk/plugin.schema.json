@@ -34,14 +34,14 @@
     },
     "engine": {
       "type": "string",
-      "pattern": "^\\s*(\\*|(\\^|>=|=)?\\s*\\d+\\.\\d+\\.\\d+([-+].*)?)\\s*$",
-      "description": "post-tester versions the plugin works with. Supported forms: \"^0.1.0\" (caret range; for 0.x only the same minor version matches), \">=0.1.0\", an exact version \"0.1.0\", or \"*\". Must include the running post-tester version.",
+      "pattern": "^[\\s0-9A-Za-z.*^~<>=|+-]*[0-9*xX][\\s0-9A-Za-z.*^~<>=|+-]*$",
+      "description": "post-tester versions the plugin works with, as an npm-style range: \"^0.1.0\" (caret; for 0.x only the same minor version matches), \"~0.1.0\" (patch updates), \">=0.1.0\", \">=0.1.0 <1.0.0\" (all must match), \"^0.1.0 || ^1.0.0\" (either), an exact version \"0.1.0\", or \"*\". Must include the running post-tester version.",
       "examples": ["^0.1.0"]
     },
     "main": {
       "type": "string",
       "minLength": 1,
-      "pattern": "^(?!/)(?![A-Za-z]:)(?!.*\\.\\.).+$",
+      "pattern": "^(?!/)(?![A-Za-z]:)(?!(.*[/\\\\])?\\.\\.([/\\\\]|$)).+$",
       "description": "Entry file, relative to the plugin folder, that does `export default definePlugin({ ... })`. TypeScript (.ts) and JavaScript (.js) are supported. Absolute paths and `..` are not allowed.",
       "examples": ["index.ts"]
     },

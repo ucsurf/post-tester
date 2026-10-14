@@ -27,7 +27,7 @@ use post_tester_core::{Engine, Error, Result, Workspace};
 use sandbox::{HostState, Sandbox, TestOutcome};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, RwLock, Weak};
+use std::sync::{Arc, Mutex, RwLock, Weak};
 use std::time::Duration;
 use ts_rs::TS;
 
@@ -215,8 +215,35 @@ impl TestReport {
 pub struct PluginHost {
     engine: Weak<Engine>,
     plugins: RwLock<Vec<Arc<Plugin>>>,
-    scripts: tokio::sync::OnceCell<Sandbox>,
+    scripts: ScriptPool,
     timeout: Duration,
+}
+
+/// Sandboxes for request scripts. A sandbox runs one script at a time, so
+/// several are kept (created on demand, about one per CPU) to let concurrent
+/// requests, such as a load test, run their scripts in parallel.
+struct ScriptPool {
+    idle: Mutex<Vec<Sandbox>>,
+    slots: tokio::sync::Semaphore,
+}
+
+impl ScriptPool {
+    fn new() -> Self {
+        // At least a few, as scripts also wait for I/O (`pt.http`, `pm.sendRequest`).
+        let size = std::thread::available_parallelism().map_or(4, |n| n.get()).clamp(4, 16);
+        Self { idle: Mutex::new(Vec::new()), slots: tokio::sync::Semaphore::new(size) }
+    }
+
+    fn take(&self) -> Option<Sandbox> {
+        self.idle.lock().expect("script pool lock poisoned").pop()
+    }
+
+    fn give_back(&self, sandbox: Sandbox) {
+        // A sandbox whose script was stopped or abandoned may still hold its pending work.
+        if !sandbox.disturbed() {
+            self.idle.lock().expect("script pool lock poisoned").push(sandbox);
+        }
+    }
 }
 
 impl std::fmt::Debug for PluginHost {
@@ -233,12 +260,7 @@ impl PluginHost {
 
     /// Like [`PluginHost::attach`], with a custom time limit for each plugin call and script.
     pub fn attach_with_timeout(engine: &Arc<Engine>, timeout: Duration) -> Arc<Self> {
-        let host = Arc::new(Self {
-            engine: Arc::downgrade(engine),
-            plugins: RwLock::new(Vec::new()),
-            scripts: tokio::sync::OnceCell::new(),
-            timeout,
-        });
+        let host = Arc::new(Self { engine: Arc::downgrade(engine), plugins: RwLock::new(Vec::new()), scripts: ScriptPool::new(), timeout });
         engine.set_extensions(host.clone());
         host
     }
@@ -251,8 +273,13 @@ impl PluginHost {
         self.plugins.read().expect("plugin lock poisoned").clone()
     }
 
+    /// The loaded plugins that match `filter`, without copying the whole list.
+    fn plugins_where(&self, filter: impl Fn(&Plugin) -> bool) -> Vec<Arc<Plugin>> {
+        self.plugins.read().expect("plugin lock poisoned").iter().filter(|p| filter(p)).cloned().collect()
+    }
+
     pub fn get(&self, name: &str) -> Option<Arc<Plugin>> {
-        self.plugins().into_iter().find(|p| p.manifest.name == name)
+        self.plugins.read().expect("plugin lock poisoned").iter().find(|p| p.manifest.name == name).cloned()
     }
 
     pub fn unload(&self, name: &str) -> bool {
@@ -501,30 +528,32 @@ impl PluginHost {
         }
     }
 
-    async fn script_sandbox(&self) -> Result<&Sandbox> {
+    /// A fresh sandbox for request scripts. Scripts are written by the user,
+    /// so they may call any host, but they cannot read secrets or files.
+    async fn new_script_sandbox(&self) -> Result<Sandbox> {
         let engine = self.engine()?;
-        self.scripts
-            .get_or_try_init(|| async {
-                // Request scripts are written by the user, so they may call any host,
-                // but they cannot read secrets or files.
-                let state = Arc::new(HostState::new(
-                    "script",
-                    Source::User,
-                    vec![Permission::Network("*".into())],
-                    vec![Permission::Network("*".into())],
-                    Arc::downgrade(&engine),
-                    None,
-                ));
-                Sandbox::new(state, None, self.timeout).await.map_err(Error::Plugin)
-            })
-            .await
+        let state = Arc::new(HostState::new(
+            "script",
+            Source::User,
+            vec![Permission::Network("*".into())],
+            vec![Permission::Network("*".into())],
+            Arc::downgrade(&engine),
+            None,
+        ));
+        Sandbox::new(state, None, self.timeout).await.map_err(Error::Plugin)
     }
 }
 
 #[async_trait]
 impl Extensions for PluginHost {
     async fn template_function(&self, name: &str, args: &OrderedMap, span: &Span) -> Result<Option<String>> {
-        let found = self.plugins().into_iter().find(|p| p.capabilities.template_functions.iter().any(|f| f.name == name));
+        let found = self
+            .plugins
+            .read()
+            .expect("plugin lock poisoned")
+            .iter()
+            .find(|p| p.capabilities.template_functions.iter().any(|f| f.name == name))
+            .cloned();
         let Some(plugin) = found else { return Ok(None) };
         let value = plugin.call(Some(span), "templateFunction", name, serde_json::json!({ "args": args })).await?;
         Ok(Some(value.as_str().map_or_else(|| value.to_string(), str::to_string)))
@@ -538,7 +567,7 @@ impl Extensions for PluginHost {
     }
 
     async fn before_request(&self, mut request: PreparedRequest, span: &Span) -> Result<PreparedRequest> {
-        for plugin in self.plugins().iter().filter(|p| p.capabilities.hooks.iter().any(|h| h == "beforeRequest")) {
+        for plugin in self.plugins_where(|p| p.capabilities.hooks.iter().any(|h| h == "beforeRequest")) {
             let payload = serde_json::json!({ "request": ScriptRequest::from_prepared(&request) });
             let value = plugin.call(Some(span), "beforeRequest", "", payload).await?;
             request = apply_request_change(request, value, &plugin.manifest.name)?;
@@ -547,7 +576,7 @@ impl Extensions for PluginHost {
     }
 
     async fn after_response(&self, _request: &PreparedRequest, mut response: Response, span: &Span) -> Result<Response> {
-        for plugin in self.plugins().iter().filter(|p| p.capabilities.hooks.iter().any(|h| h == "afterResponse")) {
+        for plugin in self.plugins_where(|p| p.capabilities.hooks.iter().any(|h| h == "afterResponse")) {
             let payload = serde_json::json!({ "response": ScriptResponse::from_response(&response) });
             let value = plugin.call(Some(span), "afterResponse", "", payload).await?;
             let changed: ScriptResponse = serde_json::from_value(value)
@@ -561,8 +590,16 @@ impl Extensions for PluginHost {
     }
 
     async fn run_script(&self, phase: ScriptPhase, code: &str, input: ScriptInput, span: &Span) -> Result<ScriptOutput> {
-        let sandbox = self.script_sandbox().await?;
-        sandbox.run_script(span, phase, code, &input).await.map_err(|e| Error::Plugin(format!("script error: {e}")))
+        let _slot = self.scripts.slots.acquire().await.map_err(|_| Error::Plugin("scripts are shutting down".into()))?;
+        let sandbox = match self.scripts.take() {
+            Some(sandbox) => sandbox,
+            None => self.new_script_sandbox().await?,
+        };
+        // Scripts start clean: globals a script creates are removed afterwards (see the prelude).
+        // If this future is dropped midway, the sandbox is dropped with it.
+        let result = sandbox.run_script(span, phase, code, &input).await;
+        self.scripts.give_back(sandbox);
+        result.map_err(|e| Error::Plugin(format!("script error: {e}")))
     }
 }
 
@@ -651,6 +688,16 @@ async fn load_plugin(
         }
     }
     for t in &capabilities.mcp_tools {
+        // Agents only accept tool names of letters, digits, `_` and `-`, and some at most 64 characters.
+        let full_name = format!("{}__{}", manifest.name.replace('-', "_"), t.name);
+        let valid_chars = !t.name.is_empty() && t.name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
+        if !valid_chars || full_name.len() > 64 {
+            problems.push(problem(
+                &manifest.main,
+                format!("MCP tool name `{}` is not valid: agents see it as `{full_name}`", t.name),
+                "use letters, digits, `_` and `-` only, and keep plugin name + tool name under 62 characters",
+            ));
+        }
         if t.description.trim().is_empty() {
             problems.push(problem(
                 &manifest.main,

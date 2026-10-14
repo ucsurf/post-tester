@@ -13,10 +13,14 @@ use rmcp::service::RunningService;
 use rmcp::{RoleClient, ServiceExt};
 use serde_json::{Value, json};
 use std::sync::Arc;
+use std::time::Duration;
 
 /// A local API for requests to hit.
 async fn start_api() -> String {
-    let app = Router::new().route("/json", get(|| async { axum::Json(json!({ "token": "abc", "user": { "id": 7 } })) }));
+    let app = Router::new()
+        .route("/json", get(|| async { axum::Json(json!({ "token": "abc", "user": { "id": 7 } })) }))
+        // Echoes the query string, as some APIs do in errors.
+        .route("/echo", get(|axum::extract::RawQuery(query): axum::extract::RawQuery| async move { query.unwrap_or_default() }));
     serve(app).await
 }
 
@@ -251,4 +255,149 @@ fn connect_options_match_the_api_json() {
     );
     let http: Transport = serde_json::from_value(json!({ "type": "http", "url": "http://x/mcp" })).unwrap();
     assert_eq!(serde_json::to_value(&http).unwrap(), json!({ "type": "http", "url": "http://x/mcp", "headers": [] }));
+}
+
+/// Writes a plugin with one MCP tool, `run`, whose body is `body`.
+fn tool_plugin(parent: &std::path::Path, name: &str, permissions: &[&str], body: &str) -> std::path::PathBuf {
+    let dir = parent.join(name);
+    std::fs::create_dir_all(&dir).unwrap();
+    let manifest = json!({
+        "name": name, "description": "A test plugin.", "version": "1.0.0", "engine": "*", "main": "index.js",
+        "provides": ["mcp-tool"], "permissions": permissions,
+    });
+    std::fs::write(dir.join("plugin.json"), manifest.to_string()).unwrap();
+    let code = format!("export default {{ mcpTools: {{ run: {{ description: \"Runs.\", run: async (input, ctx) => {{ {body} }} }} }} }};");
+    std::fs::write(dir.join("index.js"), code).unwrap();
+    dir
+}
+
+#[tokio::test]
+async fn secret_values_never_reach_the_agent() {
+    let dir = tempfile::tempdir().unwrap();
+    let api = start_api().await;
+    let workspace = Workspace::init(dir.path(), "Demo").unwrap();
+    let mut local = Environment::default();
+    local.variables.insert("baseUrl".into(), api.into());
+    // Referenced through a variable, so the request itself never says `{{secret:...}}`.
+    local.variables.insert("key".into(), "{{secret:api-key}}".into());
+    workspace.write_environment("local", &local).unwrap();
+    workspace
+        .write_request(
+            "api/echo",
+            &Request { url: "{{baseUrl}}/echo?key={{key}}".into(), tests: vec!["body == \"x\"".into()], ..Default::default() },
+        )
+        .unwrap();
+    let secrets = MemorySecrets::with(&[("api-key", "s3cr3t value/1")]);
+    let engine = Arc::new(Engine::new(Default::default(), Some(workspace), Arc::new(secrets)));
+    let agent = agent(engine.clone(), ServerOptions::default()).await;
+
+    let saved = call(&agent, "send_request", json!({ "id": "api/echo", "environment": "local" })).await;
+    let inline =
+        call(&agent, "send_request", json!({ "request": { "url": "{{baseUrl}}/echo?key={{key}}" }, "environment": "local" })).await;
+    let run = call(&agent, "run_collection", json!({ "folder": "api", "environment": "local" })).await;
+    for result in [saved, inline, run] {
+        let text = &result.content[0].as_text().unwrap().text;
+        assert!(!text.contains("s3cr3t") && text.contains("•••"), "{text}");
+    }
+    // The request really used the secret.
+    let execution = engine.send_saved("api/echo", post_tester_core::SendOptions::new(Source::User).environment(Some("local".into()))).await;
+    assert_eq!(execution.unwrap().response.unwrap().body.as_ref(), b"key=s3cr3t%20value/1");
+}
+
+#[tokio::test]
+async fn read_only_mode_refuses_plugin_tools_that_write_files() {
+    let dir = tempfile::tempdir().unwrap();
+    let engine = engine(&dir).await;
+    let host = post_tester_plugin_host::PluginHost::attach(&engine);
+    let plugins = tempfile::tempdir().unwrap();
+    host.load(
+        &tool_plugin(plugins.path(), "writer", &["fs:write"], "ctx.fs.write('x.txt', 'x'); return 'written';"),
+        vec!["fs:write".into()],
+    )
+    .await
+    .unwrap();
+    host.load(&tool_plugin(plugins.path(), "reader", &[], "return 'read';"), vec![]).await.unwrap();
+
+    let (server_io, client_io) = tokio::io::duplex(1 << 20);
+    let server = McpServer::new(engine.clone(), Some(host), ServerOptions { read_only: true });
+    tokio::spawn(async move {
+        let running = server.serve(server_io).await.unwrap();
+        let _ = running.waiting().await;
+    });
+    let agent: Agent =
+        ClientConfig::new(ClientCapabilities::default(), Implementation::new("test-agent", "1.0.0")).serve(client_io).await.unwrap();
+    let tools: Vec<String> = agent.list_all_tools().await.unwrap().into_iter().map(|t| t.name.to_string()).collect();
+    assert!(tools.contains(&"reader__run".to_string()) && !tools.iter().any(|t| t.starts_with("writer")), "{tools:?}");
+    assert_eq!(json_of(&call(&agent, "reader__run", json!({})).await), "read");
+
+    let refused = call(&agent, "writer__run", json!({})).await;
+    assert_eq!(refused.is_error, Some(true));
+    assert!(json_of(&refused).as_str().unwrap().contains("read-only mode"), "{refused:?}");
+    assert!(!dir.path().join("x.txt").exists());
+}
+
+#[tokio::test]
+async fn hung_servers_time_out_with_a_clear_error() {
+    // A server that accepts connections and never answers.
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let silent = format!("http://{}/mcp", listener.local_addr().unwrap());
+    tokio::spawn(async move {
+        let mut open = Vec::new();
+        while let Ok((socket, _)) = listener.accept().await {
+            open.push(socket);
+        }
+    });
+    let engine = Arc::new(Engine::default());
+    let clients = McpClients::new(engine.clone()).with_timeouts(Duration::from_millis(300), Duration::from_millis(300));
+    let started = std::time::Instant::now();
+    let options = ConnectOptions { name: None, transport: Transport::Http { url: silent, headers: vec![] } };
+    let error = clients.connect(options, Source::User).await.unwrap_err().to_string();
+    assert!(error.contains("no answer within 300 ms"), "{error}");
+    assert!(started.elapsed() < Duration::from_secs(5));
+    assert!(clients.sessions().is_empty());
+
+    // A server that answers the handshake, then never finishes a tool call.
+    let dir = tempfile::tempdir().unwrap();
+    let engine = self::engine(&dir).await;
+    let host = post_tester_plugin_host::PluginHost::attach(&engine);
+    let plugins = tempfile::tempdir().unwrap();
+    host.load(&tool_plugin(plugins.path(), "stuck", &[], "await new Promise(() => {});"), vec![]).await.unwrap();
+    let base = serve(Router::new().nest_service("/mcp", http_service(engine.clone(), Some(host), ServerOptions::default()))).await;
+    let clients = McpClients::new(engine.clone()).with_timeouts(Duration::from_secs(10), Duration::from_millis(300));
+    let options = ConnectOptions { name: None, transport: Transport::Http { url: format!("{base}/mcp"), headers: vec![] } };
+    let info = clients.connect(options, Source::User).await.unwrap();
+    let error = clients.call_tool(&info.id, "stuck__run", json!({}), Source::User).await.unwrap_err().to_string();
+    assert!(error.contains("tools/call timed out") && error.contains("300 ms"), "{error}");
+    // The session still works.
+    let result = clients.call_tool(&info.id, "get_workspace", json!({}), Source::User).await.unwrap();
+    assert_ne!(result["isError"], true);
+    clients.close(&info.id).await.unwrap();
+}
+
+/// A stdio server that never completes the handshake is stopped, not left running.
+#[cfg(unix)]
+#[tokio::test]
+async fn stdio_servers_are_stopped_when_connecting_fails() {
+    let dir = tempfile::tempdir().unwrap();
+    let pid_file = dir.path().join("pid");
+    let clients = McpClients::new(Arc::new(Engine::default())).with_timeouts(Duration::from_millis(500), Duration::from_millis(500));
+    let script = format!("echo $$ > '{}'; echo 'not an MCP server' >&2; exec sleep 30", pid_file.display());
+    let options = ConnectOptions {
+        name: None,
+        transport: Transport::Stdio { command: "sh".into(), args: vec!["-c".into(), script], env: Default::default(), cwd: None },
+    };
+    let error = clients.connect(options, Source::User).await.unwrap_err().to_string();
+    assert!(error.contains("did not complete the MCP handshake") && error.contains("not an MCP server"), "{error}");
+
+    let pid = std::fs::read_to_string(&pid_file).unwrap().trim().to_string();
+    let running = || {
+        let out = std::process::Command::new("ps").args(["-o", "stat=", "-p", &pid]).output().unwrap();
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    };
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    // Gone entirely: not running, and not a zombie either.
+    while !running().is_empty() {
+        assert!(std::time::Instant::now() < deadline, "process {pid} is still there: {}", running());
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
 }

@@ -1,6 +1,7 @@
 //! The built-in tools agents use. Descriptions matter: agents choose tools
 //! and fill arguments from them alone.
 
+use super::redact::References;
 use super::{McpServer, ServerOptions, activity};
 use post_tester_core::engine::Execution;
 use post_tester_core::events::{Level, Outcome, Span};
@@ -327,16 +328,22 @@ async fn send_request(server: &McpServer, args: SendArgs, span: &Span) -> Result
     let mut options = SendOptions::new(span.source().clone()).environment(args.environment.filter(|e| !e.is_empty()));
     // The request is a child of this tool call, so Live Activity shows them together.
     options.parent = Some(span.clone());
+    let mut secrets = References::workspace(&server.engine);
     let (execution, url_template) = match (args.id, args.request) {
         (id, Some(request)) => {
             let request = parse_request(request)?;
+            secrets.add(&request);
             let url = request.url.clone();
             // With an id, the ad-hoc request inherits that request's folder settings.
+            if let Some(id) = &id {
+                secrets.add_saved_request(&server.engine, id);
+            }
             options.request_id = id;
             (server.engine.send(&request, options).await, url)
         }
         (Some(id), None) => {
             let url = server.engine.require_workspace()?.read_request(&id)?.url;
+            secrets.add_saved_request(&server.engine, &id);
             (server.engine.send_saved(&id, options).await?, url)
         }
         (None, None) => {
@@ -345,7 +352,9 @@ async fn send_request(server: &McpServer, args: SendArgs, span: &Span) -> Result
             ));
         }
     };
-    Ok(execution_json(&execution, &url_template))
+    let mut result = execution_json(&execution, &url_template);
+    secrets.resolve(&server.engine).await.redact(&mut result);
+    Ok(result)
 }
 
 /// What an agent needs to know about one execution.
@@ -420,7 +429,13 @@ async fn run_collection(server: &McpServer, args: RunArgs, span: &Span) -> Resul
     options.bail = args.bail;
     let report = server.engine.run(RunTarget::Folder(args.folder), options).await?;
     span.log(Level::Info, format!("Ran \"{}\": {:?}", report.name, report.outcome));
-    Ok(report_json(&report))
+    let mut secrets = References::workspace(&server.engine);
+    for item in &report.items {
+        secrets.add_saved_request(&server.engine, &item.request_id);
+    }
+    let mut result = report_json(&report);
+    secrets.resolve(&server.engine).await.redact(&mut result);
+    Ok(result)
 }
 
 fn report_json(report: &RunReport) -> Value {

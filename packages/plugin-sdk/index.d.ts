@@ -747,6 +747,8 @@ export interface PluginResponse {
   body: string;
   /** Total time in milliseconds, from sending the request to the last byte. */
   timeMs: number;
+  /** The final URL, after redirects. Only set on responses from {@link HttpClient}. */
+  url?: string;
   /** Returns {@link body}. */
   text(): string;
   /**
@@ -908,13 +910,19 @@ export interface HttpOptions {
   json?: unknown;
   /** Time limit in milliseconds until response headers arrive. Defaults to `30000`. */
   timeoutMs?: number;
+  /**
+   * Follow redirects (up to 10). Defaults to `true`. With `false`, a 3xx
+   * response is returned as is, e.g. to read its `Location` header.
+   */
+  followRedirects?: boolean;
 }
 
 /** Options for the {@link HttpClient} shortcut methods (everything except `method` and `url`). */
 export type HttpShortcutOptions = Omit<HttpOptions, "method" | "url">;
 
 /**
- * Sends HTTP requests. Redirects are followed and cookies are shared with the
+ * Sends HTTP requests. Redirects are followed (each redirect target must be
+ * covered by a `network:` permission too) and cookies are shared with the
  * app's cookie jar. Non-2xx statuses do not throw; check `status`. Network
  * errors and denied permissions do throw.
  */

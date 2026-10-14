@@ -998,3 +998,15 @@ load-results/
 loadtest-results/
 run-results/
 *.jtl
+
+
+# ==============================================================================
+# 21. SOURCE CODE EXCEPTIONS
+# ==============================================================================
+# Some rules above also match this project's own source files:
+#   `secrets.*` matches secrets.rs, and `Icon?` matches the `icons/` folder
+#   (case-insensitively on macOS). Re-include them explicitly.
+!**/src/secrets.rs
+!apps/desktop/src-tauri/icons/
+# The web UI build output is generated (and embedded into the binary at build time).
+apps/web/dist/

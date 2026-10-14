@@ -3,7 +3,6 @@
 mod commands;
 mod context;
 mod printer;
-mod secrets;
 mod style;
 
 use clap::{Parser, Subcommand};

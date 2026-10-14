@@ -12,7 +12,7 @@ name = "pt"
 path = "src/main.rs"
 
 [dependencies]
-post-tester-core.workspace = true
+post-tester-core = { workspace = true, features = ["keyring"] }
 post-tester-plugin-host.workspace = true
 post-tester-server.workspace = true
 tokio.workspace = true
@@ -22,10 +22,8 @@ serde.workspace = true
 serde_json.workspace = true
 owo-colors.workspace = true
 open.workspace = true
-async-trait.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
-keyring = { workspace = true, features = ["apple-native", "windows-native", "linux-native"] }
 
 [dev-dependencies]
 tempfile = "3"

@@ -3,16 +3,20 @@
 //! Individual requests are not reported as separate spans (thousands per
 //! second would drown Live Activity). Instead the load test span shows live
 //! progress and a statistics summary every second.
+//!
+//! By default requests reuse open connections (keep-alive), like real clients
+//! under load do, so the test measures the server's throughput rather than the
+//! cost of TCP and TLS handshakes. [`Connections::Fresh`] opens a new
+//! connection for every request instead.
 
 use crate::engine::{Engine, SendOptions};
 use crate::error::Result;
 use crate::events::{BusConfig, EventBus, Level, Outcome, Source, Span, SpanId, SpanKind, Summary};
 use crate::model::Request;
 use serde::Serialize;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use tokio::sync::Mutex;
 
 #[derive(Debug, Clone)]
 pub struct LoadOptions {
@@ -22,6 +26,17 @@ pub struct LoadOptions {
     pub concurrency: u32,
     /// Total number of requests.
     pub requests: u32,
+}
+
+/// How a load test uses connections.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Connections {
+    /// Keep connections open and send further requests on them (the default).
+    /// Each worker holds about one HTTP/1.1 connection; HTTP/2 shares one.
+    #[default]
+    Reuse,
+    /// A new connection (DNS, TCP, TLS) for every request, like a single send.
+    Fresh,
 }
 
 /// Results of a load test. Times are in milliseconds.
@@ -44,11 +59,11 @@ pub struct LoadReport {
 }
 
 impl LoadReport {
+    // Counts stay far below 2^52, where converting them to `f64` would round.
+    #[allow(clippy::cast_precision_loss)]
     fn from_samples(samples: &mut [f64], statuses: &[u16], failed: u64, elapsed: Duration) -> Self {
         samples.sort_by(f64::total_cmp);
-        let percentile = |p: f64| {
-            if samples.is_empty() { 0.0 } else { samples[((samples.len() - 1) as f64 * p).round() as usize] }
-        };
+        let percentile = |p: f64| nearest_rank(samples, p);
         let mut status_codes = std::collections::BTreeMap::new();
         for status in statuses {
             *status_codes.entry(*status).or_insert(0) += 1;
@@ -81,6 +96,18 @@ impl LoadReport {
     }
 }
 
+/// The `p` percentile (0–1) of sorted `samples` by the nearest-rank method:
+/// the smallest sample that at least `p` of all samples are less than or equal to.
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::cast_precision_loss)]
+fn nearest_rank(sorted: &[f64], p: f64) -> f64 {
+    if sorted.is_empty() {
+        return 0.0;
+    }
+    // Rank is 1-based; `ceil` of a value in 0..=len, so the casts are exact.
+    let rank = (p * sorted.len() as f64).ceil() as usize;
+    sorted[rank.clamp(1, sorted.len()) - 1]
+}
+
 #[derive(Default)]
 struct Samples {
     times: Vec<f64>,
@@ -88,8 +115,20 @@ struct Samples {
 }
 
 impl Engine {
-    /// Sends `request` `options.requests` times with `options.concurrency` workers.
+    /// Sends `request` `options.requests` times with `options.concurrency`
+    /// workers, reusing connections (see [`Connections`]).
     pub async fn load_test(self: &Arc<Self>, request: &Request, request_id: Option<String>, options: LoadOptions) -> Result<LoadReport> {
+        self.load_test_with(request, request_id, options, Connections::default()).await
+    }
+
+    /// Like [`load_test`](Self::load_test), choosing how connections are used.
+    pub async fn load_test_with(
+        self: &Arc<Self>,
+        request: &Request,
+        request_id: Option<String>,
+        options: LoadOptions,
+        connections: Connections,
+    ) -> Result<LoadReport> {
         let title =
             format!("Load test: {} {}", request.method.as_str(), if request.name.is_empty() { &request.url } else { &request.name });
         let span = Span::start(
@@ -108,14 +147,17 @@ impl Engine {
         let guard = self.track(&span, None);
         let total = options.requests.max(1);
         let concurrency = options.concurrency.clamp(1, 1_000).min(total);
-        span.log(Level::Info, format!("{total} requests, {concurrency} at a time"));
+        let reuse = connections == Connections::Reuse;
+        let mode = if reuse { "reusing connections" } else { "a new connection for each request" };
+        span.log(Level::Info, format!("{total} requests, {concurrency} at a time, {mode}"));
 
         // Requests run against a private, silent bus so they don't flood Live Activity.
-        let quiet = Arc::new(Engine::new(
-            EventBus::new(BusConfig { history_len: 1, blob_capacity_bytes: 0 }),
-            self.workspace(),
-            self.secrets().clone(),
-        ));
+        let mut quiet =
+            Engine::new(EventBus::new(BusConfig { history_len: 1, blob_capacity_bytes: 0 }), self.workspace(), self.secrets().clone());
+        if reuse {
+            quiet = quiet.reusing_connections();
+        }
+        let quiet = Arc::new(quiet);
         quiet.set_extensions(self.extensions());
         for (k, v) in self.runtime_variables() {
             quiet.set_runtime_variable(&k, &v);
@@ -134,10 +176,12 @@ impl Engine {
                 while next.fetch_add(1, Ordering::Relaxed) < u64::from(total) && !cancel.is_cancelled() {
                     let mut send = SendOptions::new(Source::System).environment(environment.clone());
                     send.request_id = request_id.clone();
-                    let execution = quiet.send(&request, send).await;
+                    // In-flight requests stop as soon as the load test is cancelled.
+                    let execution = quiet.send_with_token(&request, send, Some(&cancel)).await;
                     match &execution.response {
+                        _ if execution.outcome == Outcome::Cancelled => {}
                         Some(response) if execution.error.is_none() => {
-                            let mut s = samples.lock().await;
+                            let mut s = samples.lock().expect("samples lock poisoned");
                             s.times.push(crate::events::millis(response.total));
                             s.statuses.push(response.status);
                         }
@@ -155,12 +199,12 @@ impl Engine {
             tokio::spawn(async move {
                 loop {
                     tokio::time::sleep(Duration::from_secs(1)).await;
-                    let s = samples.lock().await;
-                    let done = s.times.len() as u64 + failed.load(Ordering::Relaxed);
-                    let mut times = s.times.clone();
-                    let report = LoadReport::from_samples(&mut times, &s.statuses, failed.load(Ordering::Relaxed), started.elapsed());
-                    drop(s);
-                    span.progress(u32::try_from(done).unwrap_or(u32::MAX), total);
+                    let (mut times, statuses) = {
+                        let s = samples.lock().expect("samples lock poisoned");
+                        (s.times.clone(), s.statuses.clone())
+                    };
+                    let report = LoadReport::from_samples(&mut times, &statuses, failed.load(Ordering::Relaxed), started.elapsed());
+                    span.progress(u32::try_from(report.requests).unwrap_or(u32::MAX), total);
                     span.log(Level::Info, report.summary_line());
                 }
             })
@@ -170,9 +214,8 @@ impl Engine {
         }
         reporter.abort();
 
-        let s = samples.lock().await;
-        let mut times = s.times.clone();
-        let mut report = LoadReport::from_samples(&mut times, &s.statuses, failed.load(Ordering::Relaxed), started.elapsed());
+        let Samples { mut times, statuses } = std::mem::take(&mut *samples.lock().expect("samples lock poisoned"));
+        let mut report = LoadReport::from_samples(&mut times, &statuses, failed.load(Ordering::Relaxed), started.elapsed());
         report.span_id = Some(span.id());
         span.progress(u32::try_from(report.requests).unwrap_or(u32::MAX), total);
         span.log(Level::Info, format!("Finished: {}", report.summary_line()));
@@ -196,8 +239,14 @@ mod tests {
     fn percentiles() {
         let mut samples: Vec<f64> = (1..=100).map(f64::from).collect();
         let report = LoadReport::from_samples(&mut samples, &[200; 100], 0, Duration::from_secs(1));
-        assert_eq!(report.p50_ms, 51.0);
+        assert_eq!(report.p50_ms, 50.0);
+        assert_eq!(report.p90_ms, 90.0);
         assert_eq!(report.p99_ms, 99.0);
         assert_eq!(report.requests_per_second, 100.0);
+        assert_eq!(nearest_rank(&[1.0, 2.0, 3.0, 4.0], 0.5), 2.0);
+        assert_eq!(nearest_rank(&[5.0], 0.99), 5.0);
+        assert_eq!(nearest_rank(&[1.0, 2.0], 0.0), 1.0);
+        assert_eq!(nearest_rank(&[1.0, 2.0], 1.0), 2.0);
+        assert_eq!(nearest_rank(&[], 0.5), 0.0);
     }
 }

@@ -108,7 +108,7 @@ fn split_flag(arg: &str) -> (String, Option<String>) {
 }
 
 fn path_of(url: &str) -> String {
-    url::Url::parse(url).map(|u| u.path().to_string()).unwrap_or_else(|_| url.to_string())
+    url::Url::parse(url).map_or_else(|_| url.to_string(), |u| u.path().to_string())
 }
 
 #[cfg(test)]

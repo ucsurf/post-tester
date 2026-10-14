@@ -4,9 +4,10 @@ mod client;
 mod cookies;
 pub mod decode;
 pub mod sse;
-mod tls;
+pub(crate) mod tls;
 
 pub use client::send;
+pub(crate) use client::{ConnectionPool, send_with_pool};
 pub use cookies::CookieJar;
 
 use crate::expr::ResponseData;

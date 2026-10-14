@@ -90,6 +90,10 @@ pub struct Rendered {
 
 /// Renders every `{{ }}` in `template`.
 pub async fn render(template: &str, ctx: &dyn TemplateContext) -> Result<Rendered> {
+    // Most bodies and headers contain no template at all: skip the parser.
+    if !template.contains("{{") {
+        return Ok(Rendered { text: template.to_string(), unresolved: Vec::new() });
+    }
     let mut unresolved = Vec::new();
     let text = render_inner(template, ctx, 0, &mut unresolved).await?;
     unresolved.sort();
@@ -106,8 +110,12 @@ fn render_inner<'a>(
     Box::pin(async move {
         if depth > MAX_DEPTH {
             return Err(Error::Template(format!(
-                "variables reference each other more than {MAX_DEPTH} levels deep; check for a loop near `{template}`"
+                "variables reference each other more than {MAX_DEPTH} levels deep; check for a loop near `{}`",
+                excerpt(template)
             )));
+        }
+        if !template.contains("{{") {
+            return Ok(template.to_string());
         }
         let mut out = String::with_capacity(template.len());
         let mut rest = template;
@@ -138,6 +146,15 @@ fn render_inner<'a>(
         out.push_str(rest);
         Ok(out)
     })
+}
+
+/// The start of `text`, short enough for an error message.
+fn excerpt(text: &str) -> String {
+    const MAX_CHARS: usize = 80;
+    match text.char_indices().nth(MAX_CHARS) {
+        Some((end, _)) => format!("{}…", &text[..end]),
+        None => text.to_string(),
+    }
 }
 
 /// Finds the `}}` that closes a template, skipping `}}` inside quoted strings.
@@ -312,6 +329,34 @@ mod tests {
     async fn loops_are_detected() {
         let err = render("{{a}}", &ctx(&[("a", "{{b}}"), ("b", "{{a}}")])).await.unwrap_err();
         assert!(err.to_string().contains("loop"));
+    }
+
+    #[tokio::test]
+    async fn json_bodies_with_braces_render() {
+        let c = ctx(&[("id", "7"), ("name", "Ada")]);
+        let body = r#"{"user": {"id": {{id}}, "name": "{{name}}", "tags": {"a": {"b": 1}}}, "raw": "{{"}"#;
+        let r = render(body, &c).await.unwrap();
+        assert_eq!(r.text, r#"{"user": {"id": 7, "name": "Ada", "tags": {"a": {"b": 1}}}, "raw": "{{"}"#);
+        // `{{` without a closing `}}` stays as it is.
+        assert_eq!(render("a {{ b", &c).await.unwrap().text, "a {{ b");
+        // An escaped quote does not end a string argument early.
+        let r = render(r#"{{upper("say \"}}\" ok")}}"#, &c).await.unwrap();
+        assert_eq!(r.text, r#"SAY "}}" OK"#);
+    }
+
+    #[tokio::test]
+    async fn long_text_without_templates_is_returned_as_is() {
+        let text = "x".repeat(1_000_000);
+        assert_eq!(render(&text, &ctx(&[])).await.unwrap().text, text);
+        let many = "{{id}},".repeat(10_000);
+        assert_eq!(render(&many, &ctx(&[("id", "1")])).await.unwrap().text, "1,".repeat(10_000));
+    }
+
+    #[tokio::test]
+    async fn loop_errors_quote_only_an_excerpt() {
+        let long = format!("{{{{a}}}}{}", "y".repeat(10_000));
+        let err = render("{{a}}", &ctx(&[("a", &long)])).await.unwrap_err().to_string();
+        assert!(err.len() < 400, "{err}");
     }
 
     #[tokio::test]

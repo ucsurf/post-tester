@@ -58,7 +58,7 @@ pub async fn prepare(request: &Request, folders: &[FolderSettings], ctx: &dyn Te
         method: request.method.as_str().to_ascii_uppercase(),
         url,
         headers,
-        body: Default::default(),
+        body: bytes::Bytes::new(),
         options: request.options.clone(),
     };
 

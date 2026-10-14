@@ -90,7 +90,7 @@ fn convert(doc: &Value, path: &str, method: &str, op: &Value, shared: &[Value]) 
             .cloned()
             .or_else(|| json.pointer("/examples").and_then(|e| e.as_object()?.values().next()?.get("value").cloned()))
             .or_else(|| json.get("schema").map(|s| example_from_schema(doc, s, 0)));
-        let content = example.map(|e| serde_json::to_string_pretty(&e).unwrap_or_default()).unwrap_or_else(|| "{}".into());
+        let content = example.map_or_else(|| "{}".into(), |e| serde_json::to_string_pretty(&e).unwrap_or_default());
         request.body = Body::Json { content };
     }
 
@@ -128,7 +128,7 @@ fn example_from_schema(doc: &Value, schema: &Value, depth: u8) -> Value {
             Value::Object(object)
         }
         Some("array") => Value::Array(vec![example_from_schema(doc, &schema["items"], depth + 1)]),
-        Some("integer") | Some("number") => 0.into(),
+        Some("integer" | "number") => 0.into(),
         Some("boolean") => false.into(),
         Some("string") => schema.pointer("/enum/0").cloned().unwrap_or_else(|| "string".into()),
         _ => Value::Null,

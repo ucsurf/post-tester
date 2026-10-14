@@ -13,7 +13,7 @@ use crate::events::{EventBus, EventKind, Level, Outcome, Source, Span, SpanId, S
 use crate::expr::{Assertion, AssertionResult, extract};
 use crate::extensions::{Extensions, NoExtensions, ScriptInput, ScriptOutput, ScriptPhase, ScriptRequest, ScriptResponse};
 use crate::http::{self, CookieJar, PreparedRequest, Response};
-use crate::model::{FolderSettings, OrderedMap, Request};
+use crate::model::{FolderSettings, OrderedMap, Request, WorkspaceSettings};
 use crate::prepare::prepare;
 use crate::secrets::{EnvSecrets, SecretStore};
 use crate::template::{TemplateContext, Variables};
@@ -76,6 +76,8 @@ pub struct Engine {
     active: Mutex<HashMap<SpanId, CancellationToken>>,
     /// Open WebSocket sessions and the channel to send messages on them.
     ws_sessions: Mutex<HashMap<SpanId, WsSender>>,
+    /// Keep-alive connections, when this engine reuses them (load tests).
+    connections: Option<http::ConnectionPool>,
 }
 
 pub(crate) type WsSender = tokio::sync::mpsc::UnboundedSender<tokio_tungstenite::tungstenite::Message>;
@@ -103,7 +105,16 @@ impl Engine {
             runtime: Mutex::new(HashMap::new()),
             active: Mutex::new(HashMap::new()),
             ws_sessions: Mutex::new(HashMap::new()),
+            connections: None,
         }
+    }
+
+    /// Makes requests reuse open connections instead of opening a new one
+    /// each time. Timings then leave out DNS, connect and TLS for reused
+    /// connections, which is what a load test wants to measure.
+    pub(crate) fn reusing_connections(mut self) -> Self {
+        self.connections = Some(http::ConnectionPool::new());
+        self
     }
 
     pub(crate) fn ws_sessions(&self) -> std::sync::MutexGuard<'_, HashMap<SpanId, WsSender>> {
@@ -182,24 +193,25 @@ impl Engine {
 
     /// Variables visible to a request: runtime → environment → folders (leaf first) → workspace.
     pub fn variables(&self, environment: Option<&str>, folders: &[FolderSettings]) -> Result<Variables> {
+        let scope = Scope::load(self.workspace().as_ref(), environment.map(str::to_string))?;
+        Ok(self.variables_in(&scope, folders))
+    }
+
+    /// [`variables`](Self::variables) from files already read. Runtime
+    /// variables are read fresh, since scripts may have just changed them.
+    fn variables_in(&self, scope: &Scope, folders: &[FolderSettings]) -> Variables {
         let mut vars = Variables::new();
         vars.push_strings(self.runtime_variables());
-        if let Some(workspace) = self.workspace() {
-            let settings = workspace.settings()?;
-            let env_name = environment.map(str::to_string).or(settings.default_environment.clone());
-            if let Some(name) = env_name.filter(|n| !n.is_empty()) {
-                vars.push_layer(&workspace.read_environment(&name)?.variables);
-            }
-            for folder in folders.iter().rev() {
-                vars.push_layer(&folder.variables);
-            }
-            vars.push_layer(&settings.variables);
-        } else {
-            for folder in folders.iter().rev() {
-                vars.push_layer(&folder.variables);
-            }
+        if let Some(environment) = &scope.environment_variables {
+            vars.push_layer(environment);
         }
-        Ok(vars)
+        for folder in folders.iter().rev() {
+            vars.push_layer(&folder.variables);
+        }
+        if let Some(settings) = &scope.settings {
+            vars.push_layer(&settings.variables);
+        }
+        vars
     }
 
     /// The environment that will be used when none is given.
@@ -287,12 +299,14 @@ impl Engine {
             (Some(ws), Some(id)) => ws.folder_chain(id)?,
             _ => Vec::new(),
         };
-        let environment = self.resolve_environment(options.environment.clone());
+        // Settings and the environment are read once, not once per step.
+        let scope = Scope::load(workspace.as_ref(), options.environment.clone())?;
+        let environment = scope.environment.clone();
 
         // 1. Before-request script: may set variables used below, and change the request.
         let mut script_changes = None;
         if !request.scripts.before_request.trim().is_empty() {
-            let vars = self.variables(environment.as_deref(), &folders)?;
+            let vars = self.variables_in(&scope, &folders);
             let before = ScriptRequest {
                 method: request.method.as_str().to_string(),
                 url: request.url.clone(),
@@ -307,7 +321,7 @@ impl Engine {
         }
 
         // 2. Prepare: variables, folder inheritance, body, built-in auth.
-        let vars = self.variables(environment.as_deref(), &folders)?;
+        let vars = self.variables_in(&scope, &folders);
         let ctx = self.template_context(vars, span);
         let prepared = prepare(request, &folders, &ctx).await?;
         if !prepared.unresolved.is_empty() {
@@ -329,9 +343,29 @@ impl Engine {
         execution.request = Some(outgoing.clone());
 
         // 4. Send.
-        let response = http::send(outgoing.clone(), span, Some(&self.cookies), cancel).await?;
+        let response = http::send_with_pool(outgoing.clone(), span, Some(&self.cookies), cancel, self.connections.as_ref()).await?;
         let response = extensions.after_response(&outgoing, response, span).await?;
 
+        // 5–7. Tests, after-response script, extraction. The response is kept
+        // even when one of these fails, so the error is shown next to it.
+        let result = self.check_response(request, &outgoing, &response, &scope, &folders, &extensions, span, execution).await;
+        execution.response = Some(response);
+        result
+    }
+
+    /// Tests, the after-response script and variable extraction.
+    #[allow(clippy::too_many_arguments)]
+    async fn check_response(
+        &self,
+        request: &Request,
+        outgoing: &PreparedRequest,
+        response: &Response,
+        scope: &Scope,
+        folders: &[FolderSettings],
+        extensions: &Arc<dyn Extensions>,
+        span: &Span,
+        execution: &mut Execution,
+    ) -> Result<()> {
         // 5. Tests.
         let data = response.data();
         for source in request.tests.iter().filter(|t| !t.trim().is_empty()) {
@@ -346,12 +380,12 @@ impl Engine {
         // 6. After-response script.
         if !request.scripts.after_response.trim().is_empty() {
             let input = ScriptInput {
-                request: ScriptRequest::from_prepared(&outgoing),
-                response: Some(ScriptResponse::from_response(&response)),
-                variables: self.variables(environment.as_deref(), &folders)?.flatten(),
-                environment: environment.clone(),
+                request: ScriptRequest::from_prepared(outgoing),
+                response: Some(ScriptResponse::from_response(response)),
+                variables: self.variables_in(scope, folders).flatten(),
+                environment: scope.environment.clone(),
             };
-            let output = self.run_script(&extensions, ScriptPhase::AfterResponse, &request.scripts.after_response, input, span).await?;
+            let output = self.run_script(extensions, ScriptPhase::AfterResponse, &request.scripts.after_response, input, span).await?;
             execution.tests.extend(output.tests);
         }
 
@@ -368,8 +402,6 @@ impl Engine {
                 Err(e) => span.log(Level::Warn, format!("Could not extract `{name}`: {e}")),
             }
         }
-
-        execution.response = Some(response);
         Ok(())
     }
 
@@ -380,7 +412,8 @@ impl Engine {
             (Some(ws), Some(id)) => ws.folder_chain(id)?,
             _ => Vec::new(),
         };
-        let vars = self.variables(self.resolve_environment(environment).as_deref(), &folders)?;
+        let scope = Scope::load(self.workspace().as_ref(), environment)?;
+        let vars = self.variables_in(&scope, &folders);
         let span = Span::start(
             &EventBus::new(crate::events::BusConfig { history_len: 1, blob_capacity_bytes: 0 }),
             Source::System,
@@ -418,6 +451,31 @@ impl Engine {
             span.emit(EventKind::TestResult { name: test.name.clone(), passed: test.passed, detail: test.detail.clone() });
         }
         Ok(output)
+    }
+}
+
+/// The workspace files a request's variables come from, read once per execution.
+struct Scope {
+    /// The selected environment's name (the workspace default if none was given).
+    environment: Option<String>,
+    environment_variables: Option<OrderedMap>,
+    settings: Option<WorkspaceSettings>,
+}
+
+impl Scope {
+    /// `environment`: `None` (or empty) selects the workspace default.
+    fn load(workspace: Option<&Workspace>, environment: Option<String>) -> Result<Self> {
+        let environment = environment.filter(|e| !e.is_empty());
+        let Some(workspace) = workspace else {
+            return Ok(Self { environment, environment_variables: None, settings: None });
+        };
+        let settings = workspace.settings()?;
+        let environment = environment.or_else(|| settings.default_environment.clone()).filter(|e| !e.is_empty());
+        let environment_variables = match &environment {
+            Some(name) => Some(workspace.read_environment(name)?.variables),
+            None => None,
+        };
+        Ok(Self { environment, environment_variables, settings: Some(settings) })
     }
 }
 

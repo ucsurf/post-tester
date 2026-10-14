@@ -6,8 +6,8 @@ use axum::extract::ws::{Message as WsMessage, WebSocketUpgrade};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::{any, get, post};
-use post_tester_core::events::{Direction, Event, EventKind, Outcome, Phase, Source};
-use post_tester_core::loadtest::LoadOptions;
+use post_tester_core::events::{Direction, Event, EventBus, EventKind, Outcome, Phase, Source};
+use post_tester_core::loadtest::{Connections, LoadOptions};
 use post_tester_core::model::{Environment, Request};
 use post_tester_core::runner::{RunOptions, RunTarget};
 use post_tester_core::secrets::MemorySecrets;
@@ -15,13 +15,20 @@ use post_tester_core::ws::WsOptions;
 use post_tester_core::{Engine, SendOptions, Workspace};
 use std::io::Write;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 async fn start_server() -> String {
+    start_counting_server().await.0
+}
+
+/// The test server, plus the number of connections it accepted so far.
+async fn start_counting_server() -> (String, Arc<AtomicUsize>) {
     let app = Router::new()
         .route("/json", get(|| async { axum::Json(serde_json::json!({ "token": "abc", "user": { "id": 7 } })) }))
         .route("/redirect", get(|| async { Redirect::to("/json") }))
         .route("/loop", get(|| async { Redirect::to("/loop") }))
+        .route("/redirect-to-headers", post(|| async { Redirect::to("/echo-headers") }))
         .route("/set-cookie", get(|| async { ([(header::SET_COOKIE, "session=xyz; Path=/")], "ok") }))
         .route(
             "/echo-headers",
@@ -85,12 +92,17 @@ async fn start_server() -> String {
         );
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
+    let connections = Arc::new(AtomicUsize::new(0));
+    let counter = connections.clone();
+    let listener = axum::serve::ListenerExt::tap_io(listener, move |_| {
+        counter.fetch_add(1, Ordering::SeqCst);
+    });
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-    format!("http://{addr}")
+    (format!("http://{addr}"), connections)
 }
 
 fn engine() -> Arc<Engine> {
-    Arc::new(Engine::new(Default::default(), None, Arc::new(MemorySecrets::with(&[("token", "s3cret")]))))
+    Arc::new(Engine::new(EventBus::default(), None, Arc::new(MemorySecrets::with(&[("token", "s3cret")]))))
 }
 
 fn request(yaml: &str) -> Request {
@@ -254,7 +266,7 @@ async fn collection_runs_chain_requests_through_variables() {
         )
         .unwrap();
 
-    let engine = Arc::new(Engine::new(Default::default(), Some(workspace), Arc::new(MemorySecrets::default())));
+    let engine = Arc::new(Engine::new(EventBus::default(), Some(workspace), Arc::new(MemorySecrets::default())));
     let report = engine.run(RunTarget::Folder("flow".into()), RunOptions::new(Source::Cli)).await.unwrap();
     assert_eq!(report.outcome, Outcome::Ok, "{report:#?}");
     assert_eq!(report.items.len(), 2);
@@ -303,4 +315,157 @@ async fn load_tests_measure_throughput() {
     assert_eq!(report.failed, 0);
     assert_eq!(report.status_codes[&200], 20);
     assert!(report.p50_ms > 0.0);
+}
+
+#[tokio::test]
+async fn secure_websockets_use_our_tls_config() {
+    // A server that records the first bytes of the connection: a TLS ClientHello
+    // starts with record type 0x16. Without a TLS connector, tungstenite would fail
+    // before connecting ("TLS support not compiled in").
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let first_byte = tokio::spawn(async move {
+        use tokio::io::AsyncReadExt;
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let mut byte = [0u8; 1];
+        socket.read_exact(&mut byte).await.unwrap();
+        byte[0]
+    });
+    let engine = engine();
+    let options =
+        WsOptions { url: format!("wss://localhost:{}/ws", addr.port()), headers: vec![], source: Source::User, environment: None };
+    let result = tokio::time::timeout(Duration::from_secs(5), engine.ws_connect(options)).await.unwrap();
+    assert!(result.is_err(), "the fake server never completes the handshake");
+    assert_eq!(tokio::time::timeout(Duration::from_secs(5), first_byte).await.unwrap().unwrap(), 0x16, "a TLS ClientHello was sent");
+}
+
+fn load_options(concurrency: u32, requests: u32) -> LoadOptions {
+    LoadOptions { source: Source::User, environment: None, concurrency, requests }
+}
+
+#[tokio::test]
+async fn load_tests_reuse_connections_by_default() {
+    let (base, connections) = start_counting_server().await;
+    let report = engine().load_test(&request(&format!("url: {base}/json")), None, load_options(4, 40)).await.unwrap();
+    assert_eq!(report.succeeded, 40);
+    let opened = connections.load(Ordering::SeqCst);
+    assert!((1..=4).contains(&opened), "4 workers should need at most 4 connections, opened {opened}");
+}
+
+#[tokio::test]
+async fn load_tests_can_open_a_connection_per_request() {
+    let (base, connections) = start_counting_server().await;
+    let report =
+        engine().load_test_with(&request(&format!("url: {base}/json")), None, load_options(4, 20), Connections::Fresh).await.unwrap();
+    assert_eq!(report.succeeded, 20);
+    assert_eq!(connections.load(Ordering::SeqCst), 20);
+}
+
+#[tokio::test]
+async fn load_tests_recover_when_the_server_closes_idle_connections() {
+    // Answers one request per connection, claiming keep-alive, then hangs up.
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        loop {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            tokio::spawn(async move {
+                let mut request = Vec::new();
+                let mut buffer = [0u8; 1024];
+                while !request.windows(4).any(|w| w == b"\r\n\r\n") {
+                    let Ok(n @ 1..) = socket.read(&mut buffer).await else { return };
+                    request.extend_from_slice(&buffer[..n]);
+                }
+                let _ = socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: keep-alive\r\n\r\nok").await;
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            });
+        }
+    });
+    let report = engine().load_test(&request(&format!("url: http://{addr}/")), None, load_options(1, 10)).await.unwrap();
+    assert_eq!((report.succeeded, report.failed), (10, 0), "{report:?}");
+}
+
+#[tokio::test]
+async fn cancelled_load_tests_stop_in_flight_requests() {
+    let base = start_server().await;
+    let engine = engine();
+    let mut events = engine.bus().subscribe();
+    let task = {
+        let engine = engine.clone();
+        tokio::spawn(async move { engine.load_test(&request(&format!("url: {base}/slow")), None, load_options(2, 4)).await })
+    };
+    let started = events.recv().await.unwrap();
+    assert!(engine.cancel(started.span_id));
+    let report =
+        tokio::time::timeout(Duration::from_secs(3), task).await.expect("stops before the slow responses arrive").unwrap().unwrap();
+    assert_eq!(report.failed, 0, "cancelled requests are not failures");
+}
+
+#[tokio::test]
+async fn the_response_is_kept_when_a_later_step_fails() {
+    let base = start_server().await;
+    // Without a plugin host, scripts cannot run, so the after-response step fails.
+    let r = request(&format!("url: {base}/json\nscripts: {{ after_response: \"pt.test('x', () => true)\" }}"));
+    let execution = engine().send(&r, SendOptions::new(Source::User)).await;
+    assert_eq!(execution.outcome, Outcome::Error);
+    assert!(execution.error.is_some());
+    assert_eq!(execution.response.map(|r| r.status), Some(200));
+}
+
+#[tokio::test]
+async fn post_redirects_become_get_and_keep_cookies() {
+    let base = start_server().await;
+    let engine = engine();
+    engine.send(&request(&format!("url: {base}/set-cookie")), SendOptions::new(Source::User)).await;
+    let r = request(&format!("method: POST\nurl: {base}/redirect-to-headers\nbody: {{ type: json, content: '{{}}' }}"));
+    let execution = engine.send(&r, SendOptions::new(Source::User)).await;
+    let response = execution.response.expect("response");
+    assert_eq!(response.redirects, 1);
+    let body: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
+    assert_eq!(body["cookie"], "session=xyz", "the cookie jar applies to the redirected request");
+    assert!(body.get("content-type").is_none(), "a 303 turns the POST into a GET without body headers");
+}
+
+#[tokio::test]
+async fn cancelling_a_run_ends_the_pause_between_requests() {
+    let base = start_server().await;
+    let dir = tempfile::tempdir().unwrap();
+    let workspace = Workspace::init(dir.path(), "Test").unwrap();
+    workspace.delete_request("examples/get-ip").unwrap();
+    for id in ["slow/1", "slow/2"] {
+        workspace.write_request(id, &request(&format!("url: {base}/json"))).unwrap();
+    }
+    let engine = Arc::new(Engine::new(EventBus::default(), Some(workspace), Arc::new(MemorySecrets::default())));
+    let mut events = engine.bus().subscribe();
+    let task = {
+        let engine = engine.clone();
+        let options = RunOptions { delay: Duration::from_secs(30), ..RunOptions::new(Source::Cli) };
+        tokio::spawn(async move { engine.run(RunTarget::Folder("slow".into()), options).await })
+    };
+    let run = events.recv().await.unwrap().span_id;
+    // Wait for the first request to finish, then stop the run during the pause.
+    loop {
+        let event = events.recv().await.unwrap();
+        if event.parent_id == Some(run) && matches!(event.kind, EventKind::Finished { .. }) {
+            break;
+        }
+    }
+    assert!(engine.cancel(run));
+    let report = tokio::time::timeout(Duration::from_secs(3), task).await.expect("the pause ends when cancelled").unwrap().unwrap();
+    assert_eq!(report.outcome, Outcome::Cancelled);
+    assert_eq!(report.items.len(), 1);
+}
+
+/// `cargo test --release -p post-tester-core --test engine -- --ignored --nocapture bench_load`
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "benchmark"]
+async fn bench_load_test_connections() {
+    let base = start_server().await;
+    let engine = engine();
+    for connections in [Connections::Fresh, Connections::Reuse, Connections::Fresh, Connections::Reuse] {
+        let report =
+            engine.load_test_with(&request(&format!("url: {base}/json")), None, load_options(16, 5_000), connections).await.unwrap();
+        eprintln!("{connections:?}: {}", report.summary_line());
+    }
 }

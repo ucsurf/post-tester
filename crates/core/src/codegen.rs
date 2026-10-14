@@ -119,7 +119,7 @@ mod tests {
             url: "https://api.example.com/users?x=1".parse().unwrap(),
             headers: vec![("Content-Type".into(), "application/json".into()), ("Host".into(), "skip".into())],
             body: r#"{"name":"O'Brien"}"#.into(),
-            options: Default::default(),
+            options: crate::model::RequestOptions::default(),
         }
     }
 

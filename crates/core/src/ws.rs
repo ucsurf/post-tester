@@ -6,11 +6,13 @@
 use crate::engine::Engine;
 use crate::error::{Error, Result};
 use crate::events::{Direction, EventKind, Level, Source, Span, SpanId, SpanKind, Summary};
+use crate::model::HttpVersionPref;
 use crate::template::render;
 use bytes::Bytes;
 use futures::{SinkExt, StreamExt};
 use std::sync::Arc;
 use tokio::sync::mpsc;
+use tokio_tungstenite::Connector;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 
@@ -44,7 +46,7 @@ impl Engine {
     }
 
     async fn ws_open(self: &Arc<Self>, options: &WsOptions, span: &Span) -> Result<SpanId> {
-        let vars = self.variables(self.resolve_environment(options.environment.clone()).as_deref(), &[])?;
+        let vars = self.variables(options.environment.as_deref(), &[])?;
         let ctx = self.template_context(vars, span);
         let url = render(&options.url, &ctx).await?.text;
         let mut request = url.as_str().into_client_request().map_err(|e| Error::InvalidUrl { url: url.clone(), reason: e.to_string() })?;
@@ -57,8 +59,12 @@ impl Engine {
             request.headers_mut().insert(name, value);
         }
 
-        let (stream, response) =
-            tokio_tungstenite::connect_async(request).await.map_err(|e| Error::WebSocket(format!("could not connect: {e}")))?;
+        // wss:// uses the same rustls setup (ring + Mozilla roots) as HTTP requests.
+        // WebSockets upgrade an HTTP/1.1 connection, so ALPN must offer only http/1.1.
+        let tls = crate::http::tls::client_config(true, HttpVersionPref::Http1);
+        let (stream, response) = tokio_tungstenite::connect_async_tls_with_config(request, None, true, Some(Connector::Rustls(tls)))
+            .await
+            .map_err(|e| Error::WebSocket(format!("could not connect: {e}")))?;
         span.log(Level::Info, format!("Connected ({})", response.status()));
         let (mut sink, mut incoming) = stream.split();
         let (tx, mut rx) = mpsc::unbounded_channel::<Message>();

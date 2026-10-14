@@ -98,7 +98,7 @@ impl Engine {
         }
 
         let mut items = Vec::new();
-        let mut done = 0;
+        let mut done: u32 = 0;
         'outer: for iteration in 1..=iterations {
             if iterations > 1 {
                 span.log(Level::Info, format!("Iteration {iteration} of {iterations}"));
@@ -134,14 +134,18 @@ impl Engine {
                 };
                 let failed = matches!(execution.outcome, Outcome::Failed | Outcome::Error);
                 items.push(execution);
-                done += 1;
+                done = done.saturating_add(1);
                 span.progress(done, total);
                 if failed && options.bail {
                     span.log(Level::Warn, "Stopped after the first failure (bail)");
                     break 'outer;
                 }
-                if !options.delay.is_zero() {
-                    tokio::time::sleep(options.delay).await;
+                // Pause between requests (not after the last one); stopping the run ends the pause.
+                if !options.delay.is_zero() && done < total {
+                    tokio::select! {
+                        () = tokio::time::sleep(options.delay) => {}
+                        () = guard.token.cancelled() => break 'outer,
+                    }
                 }
             }
         }

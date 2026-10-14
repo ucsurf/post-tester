@@ -108,7 +108,7 @@ fn body(b: &Value) -> Body {
                 _ => Body::Text { content, content_type: "text/plain".into() },
             }
         }
-        Some("urlencoded") | Some("formdata") => {
+        Some("urlencoded" | "formdata") => {
             let key = if b["mode"] == "urlencoded" { "urlencoded" } else { "formdata" };
             let fields = b[key].as_array().map(|list| list.iter().filter_map(key_value).collect()).unwrap_or_default();
             Body::Form { fields }

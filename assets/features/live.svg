@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="96" height="96" viewBox="0 0 96 96" role="img" aria-labelledby="title desc">
+<title id="title">Live by default</title>
+<desc id="desc">A pulse trace inside viewfinder corners, swept live like a monitor by a glowing head.</desc>
+<style>
+@keyframes k0{0%{stroke-dashoffset:136.8;stroke-opacity:0.58}100%{stroke-dashoffset:-15.2;stroke-opacity:0.58}}
+@keyframes k1{0%{stroke-dashoffset:76;stroke-opacity:0.25}100%{stroke-dashoffset:-76;stroke-opacity:0.25}}
+@keyframes k2{0%{stroke-dashoffset:45.6;stroke-opacity:0.4}100%{stroke-dashoffset:-106.4;stroke-opacity:0.4}}
+@keyframes k3{0%{stroke-dashoffset:19.76;stroke-opacity:0.65}100%{stroke-dashoffset:-132.24;stroke-opacity:0.65}}
+@keyframes k4{0%{transform:translate(25px,49px)}8.55%{transform:translate(38px,49px)}13.86%{transform:translate(42px,42px)}26.15%{transform:translate(47px,60px)}49.51%{transform:translate(53px,25px)}80.03%{transform:translate(59px,71px)}94.74%{transform:translate(63px,49px)}100%{transform:translate(71px,49px)}}
+@keyframes k5{0%{opacity:0}3%{opacity:1}94%{opacity:1}100%{opacity:0}}
+@media (prefers-reduced-motion:reduce){*{animation:none!important}.da{stroke-dasharray:none!important}}
+</style>
+<defs><linearGradient id="bg" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="96" y2="96"><stop offset="0" stop-color="#6366f1"/><stop offset="1" stop-color="#14b8a6"/></linearGradient><linearGradient id="hl" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".22"/><stop offset=".5" stop-color="#fff" stop-opacity="0"/></linearGradient><filter id="sh" filterUnits="userSpaceOnUse" x="0" y="0" width="96" height="96"><feDropShadow dx="0" dy="1.4" stdDeviation="1.3" flood-color="#1e1b4b" flood-opacity=".3"/></filter><radialGradient id="hg"><stop offset="0" stop-color="#fff" stop-opacity=".85"/><stop offset=".45" stop-color="#fff" stop-opacity=".3"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></radialGradient></defs>
+<rect width="96" height="96" rx="22" fill="url(#bg)"/>
+<g filter="url(#sh)" fill="none" stroke="#fff" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round"><path d="M15 35V25A8 8 0 0 1 23 17H33M63 17H73A8 8 0 0 1 81 25V35M81 61V71A8 8 0 0 1 73 79H63M33 79H23A8 8 0 0 1 15 71V61"/><path class="da" d="M25 49L38 49L42 42L47 60L53 25L59 71L63 49L71 49" style="stroke-dasharray:136.8 15.2;animation:k0 2.8s linear infinite"/><path class="da" d="M25 49L38 49L42 42L47 60L53 25L59 71L63 49L71 49" stroke-opacity="0" style="stroke-dasharray:76 76;animation:k1 2.8s linear infinite"/><path class="da" d="M25 49L38 49L42 42L47 60L53 25L59 71L63 49L71 49" stroke-opacity="0" style="stroke-dasharray:45.6 106.4;animation:k2 2.8s linear infinite"/><path class="da" d="M25 49L38 49L42 42L47 60L53 25L59 71L63 49L71 49" stroke-opacity="0" style="stroke-dasharray:19.76 132.24;animation:k3 2.8s linear infinite"/></g>
+<g transform="translate(71 49)" style="animation:k4 2.8s linear infinite"><g style="animation:k5 2.8s linear infinite"><circle r="11" fill="url(#hg)"/><circle r="4.8" fill="#fff"/></g></g>
+<rect width="96" height="96" rx="22" fill="url(#hl)"/>
+<rect x=".75" y=".75" width="94.5" height="94.5" rx="21.25" fill="none" stroke="#fff" stroke-opacity=".3" stroke-width="1.5"/>
+</svg>

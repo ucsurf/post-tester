@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="96" height="96" viewBox="0 0 96 96" role="img" aria-labelledby="title desc">
+<title id="title">Plugins for everyone</title>
+<desc id="desc">A plug and a socket ease together and connect with a small spark.</desc>
+<style>
+@keyframes k0{0%{opacity:0;transform:scale(.55)}28.1%{opacity:0;transform:scale(.55);animation-timing-function:cubic-bezier(.2,.7,.3,1)}30.95%{opacity:1;transform:scale(.9)}41.67%{opacity:0;transform:scale(1.18)}100%{opacity:0;transform:scale(1.18)}}
+@keyframes k1{0%{opacity:0}28.1%{opacity:0}31.43%{opacity:1}50%{opacity:.4}70.24%{opacity:.4}78.57%{opacity:0}100%{opacity:0}}
+@keyframes k2{0%{transform:translateX(6.5px)}8.33%{transform:translateX(6.5px);animation-timing-function:cubic-bezier(.55,0,.25,1)}28.57%{transform:translateX(0)}70.24%{transform:translateX(0);animation-timing-function:cubic-bezier(.45,0,.3,1)}86.9%{transform:translateX(6.5px)}100%{transform:translateX(6.5px)}}
+@keyframes k3{0%{transform:translateX(-6.5px)}8.33%{transform:translateX(-6.5px);animation-timing-function:cubic-bezier(.55,0,.25,1)}28.57%{transform:translateX(0)}70.24%{transform:translateX(0);animation-timing-function:cubic-bezier(.45,0,.3,1)}86.9%{transform:translateX(-6.5px)}100%{transform:translateX(-6.5px)}}
+.sp{transform-box:fill-box;transform-origin:center}
+@media (prefers-reduced-motion:reduce){*{animation:none!important}.da{stroke-dasharray:none!important}}
+</style>
+<defs><linearGradient id="bg" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="96" y2="96"><stop offset="0" stop-color="#6366f1"/><stop offset="1" stop-color="#14b8a6"/></linearGradient><linearGradient id="hl" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".22"/><stop offset=".5" stop-color="#fff" stop-opacity="0"/></linearGradient><filter id="sh" filterUnits="userSpaceOnUse" x="0" y="0" width="96" height="96"><feDropShadow dx="0" dy="1.4" stdDeviation="1.3" flood-color="#1e1b4b" flood-opacity=".3"/></filter><radialGradient id="gl"><stop offset="0" stop-color="#fff" stop-opacity=".55"/><stop offset=".5" stop-color="#fff" stop-opacity=".18"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></radialGradient></defs>
+<rect width="96" height="96" rx="22" fill="url(#bg)"/>
+<g transform="rotate(-45 48 48)"><circle cx="52" cy="48" r="24" fill="url(#gl)" opacity="0" style="animation:k1 4.2s infinite"/></g>
+<g filter="url(#sh)" fill="none" stroke="#fff" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round"><g transform="rotate(-45 48 48)"><g transform="translate(6.5 0)" style="animation:k2 4.2s infinite"><path d="M52 37H58A11 11 0 0 1 58 59H52Z"/><path d="M69 48H78"/></g><g transform="translate(-6.5 0)" style="animation:k3 4.2s infinite"><path d="M44 37H38A11 11 0 0 0 38 59H44Z"/><path d="M27 48H18"/><path d="M44 43H49.5M44 53H49.5" stroke-width="5"/></g></g></g>
+<g transform="rotate(-45 48 48)"><g class="sp" opacity="0" style="animation:k0 4.2s infinite"><path d="M51 29L51 22M38.79 33.45L34.29 28.08M63.21 33.45L67.71 28.08" fill="none" stroke="#fff" stroke-width="4" stroke-linecap="round"/></g></g>
+<rect width="96" height="96" rx="22" fill="url(#hl)"/>
+<rect x=".75" y=".75" width="94.5" height="94.5" rx="21.25" fill="none" stroke="#fff" stroke-opacity=".3" stroke-width="1.5"/>
+</svg>

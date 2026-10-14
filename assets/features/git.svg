@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="96" height="96" viewBox="0 0 96 96" role="img" aria-labelledby="title desc">
+<title id="title">Git-friendly</title>
+<desc id="desc">A feature commit pops in and merges into main, like a pull request.</desc>
+<style>
+@keyframes k0{0%{stroke-dashoffset:64.8;opacity:1}14%{stroke-dashoffset:64.8;opacity:1;animation-timing-function:cubic-bezier(.45,0,.25,1)}30%{stroke-dashoffset:0;opacity:1}78%{stroke-dashoffset:0;opacity:1}87%{stroke-dashoffset:0;opacity:0}100%{stroke-dashoffset:64.8;opacity:0}}
+@keyframes k1{0%{transform:scale(1);opacity:0}29.6%{transform:scale(1);opacity:0;animation-timing-function:cubic-bezier(.2,.7,.3,1)}31.2%{transform:scale(1.12);opacity:.8}48%{transform:scale(1.9);opacity:0}100%{transform:scale(1.9);opacity:0}}
+@keyframes k2{0%{transform:scale(0);opacity:1}6%{transform:scale(0);opacity:1;animation-timing-function:cubic-bezier(.3,.7,.4,1)}10.8%{transform:scale(1.18);opacity:1;animation-timing-function:ease-in-out}14%{transform:scale(1);opacity:1}78%{transform:scale(1);opacity:1}87%{transform:scale(.6);opacity:0}100%{transform:scale(0);opacity:0}}
+@keyframes k3{0%{transform:scale(0);opacity:1}30%{transform:scale(0);opacity:1;animation-timing-function:cubic-bezier(.3,.7,.4,1)}34.8%{transform:scale(1.18);opacity:1;animation-timing-function:ease-in-out}38%{transform:scale(1);opacity:1}78%{transform:scale(1);opacity:1}87%{transform:scale(.6);opacity:0}100%{transform:scale(0);opacity:0}}
+.pp,.rg{transform-box:fill-box;transform-origin:center}
+@media (prefers-reduced-motion:reduce){*{animation:none!important}.da{stroke-dasharray:none!important}}
+</style>
+<defs><linearGradient id="bg" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="96" y2="96"><stop offset="0" stop-color="#6366f1"/><stop offset="1" stop-color="#14b8a6"/></linearGradient><linearGradient id="hl" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".22"/><stop offset=".5" stop-color="#fff" stop-opacity="0"/></linearGradient><filter id="sh" filterUnits="userSpaceOnUse" x="0" y="0" width="96" height="96"><feDropShadow dx="0" dy="1.4" stdDeviation="1.3" flood-color="#1e1b4b" flood-opacity=".3"/></filter></defs>
+<rect width="96" height="96" rx="22" fill="url(#bg)"/>
+<g filter="url(#sh)" fill="none" stroke="#fff" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round"><path d="M32 24V72"/><path class="da" d="M66 30V44C66 60 50 72 32 72" style="stroke-dasharray:64.8 64.8;animation:k0 5s infinite"/><circle cx="32" cy="24" r="7.5" fill="url(#bg)" stroke-width="5"/><circle cx="32" cy="72" r="7.5" fill="url(#bg)" stroke-width="5"/><g class="pp" style="animation:k2 5s infinite"><circle cx="66" cy="30" r="7.5" fill="url(#bg)" stroke-width="5"/></g><g class="pp" style="animation:k3 5s infinite"><circle cx="32" cy="72" r="3.2" fill="#fff" stroke="none"/></g></g>
+<circle class="rg" cx="32" cy="72" r="11.5" fill="none" stroke="#fff" stroke-width="2.2" opacity="0" style="animation:k1 5s infinite"/>
+<rect width="96" height="96" rx="22" fill="url(#hl)"/>
+<rect x=".75" y=".75" width="94.5" height="94.5" rx="21.25" fill="none" stroke="#fff" stroke-opacity=".3" stroke-width="1.5"/>
+</svg>

@@ -21,4 +21,4 @@ Plugins add template functions, auth methods, request hooks, importers, exporter
 
 ## Optional
 
-- [README](README.md): project overview, features and the plan for MCP support.
+- [README](README.md): project overview, features, quick start, and the MCP server and client.

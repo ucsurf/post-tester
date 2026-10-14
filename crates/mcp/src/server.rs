@@ -25,7 +25,7 @@ use std::sync::Arc;
 
 /// Shown to agents when they connect: what post-tester is and how to use it.
 const INSTRUCTIONS: &str = "\
-post-tester is the user's local API client (like Postman, but local-first). It holds their saved HTTP and \
+post-tester is the user's local-first API client. It holds their saved HTTP and \
 GraphQL requests (a workspace of YAML files), environments with variables, and tests such as `status == 200`. \
 Everything you do here appears live in the user's post-tester window, marked as done by an AI agent.
 

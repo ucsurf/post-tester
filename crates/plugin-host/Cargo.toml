@@ -1,0 +1,36 @@
+[package]
+name = "post-tester-plugin-host"
+description = "Runs post-tester plugins and request scripts in a sandboxed JavaScript engine."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+post-tester-core.workspace = true
+rquickjs.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+base64.workspace = true
+sha2.workspace = true
+hmac.workspace = true
+hex.workspace = true
+uuid.workspace = true
+rand.workspace = true
+url.workspace = true
+bytes.workspace = true
+ts-rs.workspace = true
+oxc = { version = "0.154", features = ["transformer", "codegen", "semantic"] }
+
+[dev-dependencies]
+tempfile = "3"
+axum.workspace = true
+
+[lints]
+workspace = true

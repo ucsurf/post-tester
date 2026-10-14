@@ -57,6 +57,9 @@ pub enum Error {
     #[error("WebSocket error: {0}")]
     WebSocket(String),
 
+    #[error("MCP error: {0}")]
+    Mcp(String),
+
     #[error(transparent)]
     Io(#[from] std::io::Error),
 }

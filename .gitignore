@@ -1,0 +1,876 @@
+# ==============================================================================  
+#  wp-malware-care — .gitignore  
+#  
+#  Merged from the canonical github/gitignore templates (WordPress, Composer,  
+#  Python, Node, Sass, Laravel, Symfony, Jekyll, Ansible, Vagrant + the Global/  
+#  JetBrains, VSCode, Vim, Emacs, SublimeText, Eclipse, NetBeans, macOS,  
+#  Windows, Linux, Backup, Archives, Tags, Dropbox sets) and gitignore.io,  
+#  then trimmed of patterns that would hide real WordPress-plugin source.  
+#  
+#  Deliberately NOT ignored — see notes inline:  
+#    bin/  /index.php  /license.txt  *.pot  *.mo  lib/  phpcs.xml  *.svg  
+# ==============================================================================  
+  
+  
+# ==============================================================================  
+# 1. SECRETS & ENVIRONMENT  
+# ==============================================================================  
+.env  
+.env.*  
+.env-*  
+!.env.example  
+!.env.sample  
+!.env.template  
+!.env.dist  
+!.env.test.example  
+.envrc  
+.direnv/  
+  
+# Explicit variants (already covered above; listed so they are greppable)  
+.env.local  
+.env.backup  
+.env.development  
+.env.development.local  
+.env.staging  
+.env.production  
+.env.production.local  
+.env.test  
+.env.test.local  
+.env.ai  
+.env-ai  
+.env-development  
+.env-staging  
+.env-production  
+.env-test  
+  
+# Keys, certificates, credential stores  
+*.pem  
+*.key  
+*.p12  
+*.pfx  
+*.jks  
+*.keystore  
+*.asc  
+*.gpg  
+*.ppk  
+secring.*  
+id_rsa  
+id_rsa.*  
+id_dsa  
+id_dsa.*  
+id_ecdsa  
+id_ecdsa.*  
+id_ed25519  
+id_ed25519.*  
+**/.ssh/id_*  
+**/.ssh/*_id_*  
+**/.ssh/known_hosts  
+.ssh/  
+.aws/  
+.gnupg/  
+secrets.*  
+credentials.*  
+auth.json  
+.netrc  
+.npmrc  
+.pypirc  
+.htpasswd  
+.pgpass  
+.my.cnf  
+service-account*.json  
+gcloud-*.json  
+storage/*.key  
+http-client.private.env.json  
+.streamlit/secrets.toml  
+  
+  
+# ==============================================================================  
+# 2. AI ASSISTANTS & AGENT TOOLING  
+# ==============================================================================  
+  
+# --- Agent instruction / memory files at project root -------------------------  
+# Ignored by choice: agent context is kept local, not shared through the repo.  
+AGENT.md  
+AGENTS.md  
+CLAUDE.md  
+GEMINI.md  
+QWEN.md  
+WARP.md  
+LLM.md  
+LLMS.md  
+# llms.txt / llms-full.txt are meant to be PUBLISHED (served for LLM crawlers),  
+# not local agent context. Uncomment only if yours are generated locally.  
+# llms.txt  
+# llms-full.txt  
+CONVENTIONS.md  
+replit.md  
+AGENT.local.md  
+AGENTS.local.md  
+CLAUDE.local.md  
+GEMINI.local.md  
+  
+# --- Agent rule / hint files --------------------------------------------------  
+.rules  
+.cursorrules  
+.windsurfrules  
+.clinerules  
+.roomodes  
+.goosehints  
+.continuerules  
+.augment-guidelines  
+.kilocodemodes  
+.aider.conf.yml  
+.aiderignore  
+.cursorignore  
+.codeiumignore  
+.aiexclude  
+.github/copilot-instructions.md  
+.github/copilot-instructions.local.md  
+.github/instructions/  
+.github/prompts/  
+.github/chatmodes/  
+  
+# --- MCP server configuration -------------------------------------------------  
+.mcp.json  
+.mcp.local.json  
+mcp.json  
+mcp.local.json  
+  
+# --- Agent working directories ------------------------------------------------  
+.agents/  
+.agent/  
+.ai/  
+.ai-*  
+.claude/  
+.claude.json  
+.claude.json.*  
+.claude-*  
+.codex/  
+.codex-*  
+.muse/  
+.cursor/  
+.windsurf/  
+.kiro/  
+.kimi*/  
+.gemini/  
+.qwen/  
+.aider*  
+.continue/  
+.copilot/  
+.cline/  
+.roo/  
+.zed/  
+.junie/  
+.trae/  
+.augment/  
+.qodo/  
+.specstory/  
+.opencode/  
+.openhands/  
+.goose/  
+.crush/  
+.amp/  
+.kilocode/  
+.sourcegraph/  
+.cody/  
+.tabnine/  
+.tabby*/  
+.codeium/  
+.supermaven/  
+.pieces/  
+.blackbox/  
+.warp/  
+.bolt/  
+.v0/  
+.lovable/  
+.devin/  
+.factory/  
+.sweep/  
+.refact/  
+.bito/  
+.lingma/  
+.marscode/  
+.comate/  
+.fitten*/  
+.smol*/  
+.amazonq/  
+.q/  
+  
+# --- Agent scratch output -----------------------------------------------------  
+.qa-*/  
+.llm-cache/  
+llm-cache/  
+.prompt-cache/  
+  
+# ==============================================================================  
+# 3. IDEs & EDITORS  
+# ==============================================================================  
+  
+# --- JetBrains (PhpStorm, IntelliJ, PyCharm, WebStorm, ...) -------------------  
+.idea/  
+.idea_modules/  
+*.iml  
+*.ipr  
+*.iws  
+out/  
+modules.xml  
+atlassian-ide-plugin.xml  
+com_crashlytics_export_strings.xml  
+crashlytics.properties  
+crashlytics-build.properties  
+fabric.properties  
+cmake-build-*/  
+  
+# --- VS Code / Visual Studio --------------------------------------------------  
+.vscode/  
+.vscode-test/  
+*.code-workspace  
+*.vsix  
+.history/  
+.ionide/  
+.vs/  
+*.suo  
+*.user  
+*.userosscache  
+*.sln.docstates  
+  
+# --- Sublime Text -------------------------------------------------------------  
+*.sublime-workspace  
+*.sublime-project  
+*.tmlanguage.cache  
+*.tmPreferences.cache  
+*.stTheme.cache  
+GitHub.sublime-settings  
+Package Control.ca-bundle  
+Package Control.ca-certs/  
+Package Control.ca-list  
+Package Control.cache/  
+Package Control.last-run  
+Package Control.merged-ca-bundle  
+Package Control.system-ca-bundle  
+Package Control.user-ca-bundle  
+bh_unicode_properties.cache  
+oscrypto-ca-bundle.crt  
+sftp-config.json  
+sftp-config-alt*.json  
+  
+# --- Vim / Neovim -------------------------------------------------------------  
+[._]*.s[a-v][a-z]  
+[._]*.sw[a-p]  
+[._]s[a-rt-v][a-z]  
+[._]ss[a-gi-z]  
+[._]sw[a-p]  
+[._]*.un~  
+*.swp  
+*.swo  
+*.swn  
+*~  
+.netrwhist  
+Session.vim  
+Sessionx.vim  
+.vim/  
+.nvim/  
+  
+# --- Emacs --------------------------------------------------------------------  
+*#  
+\#*\#  
+.\#*  
+*.elc  
+*_archive  
+*_flymake.*  
+*.~undo-tree~  
+flycheck_*.el  
+.cask/  
+.projectile  
+.dir-locals.el  
+.org-id-locations  
+/.emacs.desktop  
+/.emacs.desktop.lock  
+/elpa/  
+/eshell/history  
+/eshell/lastdir  
+/network-security.data  
+auto-save-list/  
+auto-save-list  
+tramp  
+  
+# --- Eclipse ------------------------------------------------------------------  
+.project  
+.classpath  
+.settings/  
+.metadata/  
+.buildpath  
+.loadpath  
+.cproject  
+.factorypath  
+.autotools  
+.target  
+.springBeans  
+.scala_dependencies  
+.worksheet  
+.texlipse  
+.cache-main  
+.sts4-cache/  
+.apt_generated/  
+.apt_generated_tests/  
+.externalToolBuilders/  
+.recommenders/  
+local.properties  
+*.launch  
+*.pydevproject  
+*~.nib  
+# NOTE: Eclipse's own template ignores `bin/` — omitted on purpose, it collides  
+# with bin/install-wp-tests.sh from the standard WP plugin test scaffold.  
+  
+# --- NetBeans -----------------------------------------------------------------  
+**/nbproject/private/  
+**/nbproject/Makefile-*.mk  
+**/nbproject/Package-*.bash  
+/nbproject/private/  
+/nbbuild/  
+/nbdist/  
+/.nb-gradle/  
+nbactions.xml  
+nb-configuration.xml  
+  
+# --- Other editors ------------------------------------------------------------  
+*.tmproj  
+*.tmproject  
+tmtags  
+*.esproj  
+*.espressostorage  
+Espresso.storage  
+.kateproject  
+.kdev4/  
+*.kdev4  
+*.xcworkspace  
+xcuserdata/  
+.fleet/  
+.helix/  
+.nova/  
+.tern-project  
+.tern-port  
+.ycm_extra_conf.py  
+.clangd/  
+.cache/clangd/  
+  
+# --- ctags / gtags / cscope ---------------------------------------------------  
+tags  
+.tags  
+TAGS  
+.TAGS  
+!TAGS/  
+!tags/  
+gtags.files  
+GPATH  
+GRTAGS  
+GSYMS  
+GTAGS  
+cscope.files  
+cscope.out  
+cscope.in.out  
+cscope.po.out  
+  
+  
+# ==============================================================================  
+# 4. OPERATING SYSTEM CRUFT  
+# ==============================================================================  
+  
+# --- macOS --------------------------------------------------------------------  
+.DS_Store  
+.DS_Store?  
+.AppleDouble  
+.AppleDB  
+.AppleDesktop  
+.LSOverride  
+._*  
+*.icloud  
+.localized  
+.file  
+.Spotlight-V100  
+.Trashes  
+.DocumentRevisions-V100  
+.fseventsd  
+.TemporaryItems  
+.VolumeIcon.icns  
+.com.apple.timemachine.donotpresent  
+.com.apple.timemachine.supported  
+.MobileBackups  
+.MobileBackups.trash  
+MobileBackups.trash  
+Backups.backupdb  
+Network Trash Folder  
+Temporary Items  
+TheFindByContentFolder  
+TheVolumeSettingsFolder  
+__MACOSX/  
+lost+found  
+.apdisk  
+.hotfiles.btree  
+Icon?  
+  
+# --- Windows ------------------------------------------------------------------  
+Thumbs.db  
+Thumbs.db:encryptable  
+ehthumbs.db  
+ehthumbs_vista.db  
+[Dd]esktop.ini  
+$RECYCLE.BIN/  
+*.lnk  
+*.stackdump  
+*.cab  
+*.msi  
+*.msix  
+*.msm  
+*.msp  
+  
+# --- Linux --------------------------------------------------------------------  
+.fuse_hidden*  
+.Trash-*  
+.nfs*  
+.directory  
+nohup.out  
+  
+# --- Sync clients -------------------------------------------------------------  
+.dropbox  
+.dropbox.attr  
+.dropbox.cache  
+.sync/  
+.syncthing*  
+  
+  
+# ==============================================================================  
+# 5. TEMP, CACHE, LOGS, BACKUPS  
+# ==============================================================================  
+*.tmp  
+*.temp  
+*.temporary  
+*.bak  
+*.back  
+*.backup  
+*.old  
+*.ori  
+*.original  
+*.orig  
+*.rej  
+*.sav  
+*.gho  
+*.swap  
+*.pid  
+*.seed  
+*.pid.lock  
+pids  
+.tmp/  
+tmp/  
+temp/  
+.temp/  
+.cache/  
+cache/  
+.sass-cache/  
+*.css.map  
+*.sass.map  
+*.scss.map  
+.parcel-cache/  
+.turbo/  
+.eslintcache  
+.stylelintcache  
+.prettiercache  
+.php_cs.cache  
+.php-cs-fixer.cache  
+.phpunit.result.cache  
+.phpunit.cache  
+.phpunit.cache/  
+.phpactor.json  
+.psalm/  
+.phpstan/  
+.rpt2_cache/  
+.rts2_cache_cjs/  
+.rts2_cache_es/  
+.rts2_cache_umd/  
+  
+# --- Logs ---------------------------------------------------------------------  
+*.log  
+logs/  
+log/  
+npm-debug.log*  
+yarn-debug.log*  
+yarn-error.log*  
+pnpm-debug.log*  
+lerna-debug.log*  
+.pnpm-debug.log*  
+debug.log  
+error_log  
+error.log  
+access.log  
+crash.log  
+crash.*.log  
+report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json  
+  
+  
+# ==============================================================================  
+# 6. DATABASES & DUMPS  
+# ==============================================================================  
+# NOTE: if this project ships a bundled signature/definition database, add an  
+# explicit `!path/to/signatures.db` exception below the block.  
+*.sql  
+*.sql.gz  
+*.sql.bz2  
+*.dump  
+*.db  
+*.db-shm  
+*.db-wal  
+*.sqlite  
+*.sqlite3  
+db.sqlite3  
+db.sqlite3-journal  
+*.rdb  
+*.aof  
+*.mdb  
+*.accdb  
+*.dbf  
+*.mwb.bak  
+!schema.sql  
+!**/migrations/*.sql  
+!**/fixtures/*.sql  
+  
+  
+# ==============================================================================  
+# 7. ARCHIVES  
+# ==============================================================================  
+*.zip  
+*.tar  
+*.tar.gz  
+*.tgz  
+*.gz  
+*.gzip  
+*.bz2  
+*.bzip  
+*.bzip2  
+*.xz  
+*.txz  
+*.lzma  
+*.zst  
+*.tzst  
+*.rar  
+*.7z  
+*.iso  
+*.dmg  
+*.deb  
+*.rpm  
+*.gem  
+*.jar  
+*.xpi  
+!sitemap.xml.gz  
+  
+  
+# ==============================================================================  
+# 8. PHP / COMPOSER  
+# ==============================================================================  
+/vendor/  
+vendor/  
+composer.phar  
+*.phar  
+.composer/  
+.php-version  
+!composer.json  
+!composer.lock  
+# NOTE: phpcs.xml / phpcs.xml.dist / phpunit.xml.dist are NOT ignored — plugin  
+# repos normally commit their coding-standards and test config.  
+  
+# Build & coverage output  
+/build/  
+/dist/  
+/coverage/  
+cover/  
+clover.xml  
+coverage.xml  
+junit.xml  
+*.lcov  
+lib-cov  
+.nyc_output  
+.phpdoc/  
+  
+# Framework leftovers occasionally vendored into WP projects  
+/.web-server-pid  
+/app/bootstrap.php.cache  
+/app/config/parameters.yml  
+/app/config/parameters.ini  
+bootstrap/compiled.php  
+Homestead.json  
+Homestead.yaml  
+public/hot  
+public/storage  
+public_html/hot  
+public_html/storage  
+  
+  
+# ==============================================================================  
+# 9. WORDPRESS  
+# ==============================================================================  
+# Core, config and site instance data — the plugin/theme source stays tracked.  
+wp-config.php  
+wp-config-local.php  
+wp-config-sample.php  
+/wp-admin/  
+/wp-includes/  
+/wp-activate.php  
+/wp-blog-header.php  
+/wp-comments-post.php  
+/wp-cron.php  
+/wp-links-opml.php  
+/wp-load.php  
+/wp-login.php  
+/wp-mail.php  
+/wp-settings.php  
+/wp-signup.php  
+/wp-trackback.php  
+/xmlrpc.php  
+/readme.html  
+.htaccess  
+.user.ini  
+sitemap.xml  
+sitemap.xml.gz  
+  
+# NOTE: root /index.php and /license.txt are NOT ignored — a plugin repo  
+# legitimately ships a "silence is golden" index.php and a LICENSE.txt.  
+# Uncomment the two lines below only if this repo is a full WordPress site root.  
+# /index.php  
+# /license.txt  
+  
+# wp-content (site data, not plugin source)  
+/wp-content/index.php  
+/wp-content/upgrade/  
+/wp-content/upgrade-temp-backup/  
+/wp-content/uploads/  
+/wp-content/uploads.ini  
+/wp-content/blogs.dir/  
+/wp-content/backup-db/  
+/wp-content/backups/  
+/wp-content/cache/  
+/wp-content/languages/  
+/wp-content/advanced-cache.php  
+/wp-content/object-cache.php  
+/wp-content/db.php  
+/wp-content/debug.log  
+/wp-content/w3tc-config/  
+/wp-content/wflogs/  
+/wp-content/plugins/hello.php  
+/wp-content/themes/twenty*/  
+  
+# NOTE: the plugin's own languages/*.pot and *.mo files ARE tracked on purpose —  
+# the upstream Python template ignores *.pot/*.mo, which would delete them here.  
+  
+# Local WP dev stacks & tooling  
+/wordpress/  
+/.wordpress-org/  
+/wpcs/  
+.wp-env.override.json  
+wp-cli.local.yml  
+.lando.local.yml  
+.ddev/  
+!.ddev/config.yaml  
+  
+  
+# ==============================================================================  
+# 10. PYTHON  
+# ==============================================================================  
+__pycache__/  
+*.py[codz]  
+*$py.class  
+*.so  
+.Python  
+build/  
+develop-eggs/  
+downloads/  
+eggs/  
+.eggs/  
+lib64/  
+parts/  
+sdist/  
+var/  
+wheels/  
+share/python-wheels/  
+*.egg-info/  
+.installed.cfg  
+*.egg  
+*.manifest  
+*.spec  
+MANIFEST  
+pip-log.txt  
+pip-delete-this-directory.txt  
+# NOTE: bare `lib/` from the upstream template is omitted — it collides with  
+# PHP projects that keep sources in lib/.  
+  
+# Virtualenvs & interpreter managers  
+.venv  
+.venv/  
+venv/  
+ENV/  
+env/  
+env.bak/  
+venv.bak/  
+.python-version  
+.virtualenv/  
+__pypackages__/  
+.pixi/*  
+!.pixi/config.toml  
+  
+# Testing, typing, linting  
+.pytest_cache/  
+.tox/  
+.nox/  
+.coverage  
+.coverage.*  
+*.cover  
+*.py,cover  
+htmlcov/  
+nosetests.xml  
+.hypothesis/  
+.mypy_cache/  
+.dmypy.json  
+dmypy.json  
+.pyre/  
+.pytype/  
+.ruff_cache/  
+pyrightconfig.json  
+cython_debug/  
+  
+# Packaging / env managers  
+.pdm.toml  
+.pdm-python  
+.pdm-build/  
+poetry.toml  
+Pipfile.lock  
+uv.lock  
+!requirements*.txt  
+  
+# Frameworks & tools  
+.scrapy  
+.ropeproject  
+.spyderproject  
+.spyproject  
+.webassets-cache  
+.pybuilder/  
+.abstra/  
+__marimo__/  
+local_settings.py  
+instance/  
+docs/_build/  
+celerybeat-schedule*  
+celerybeat.pid  
+*.sage.py  
+  
+# Notebooks  
+.ipynb_checkpoints  
+.ipynb_checkpoints/  
+profile_default/  
+ipython_config.py  
+  
+  
+# ==============================================================================  
+# 11. NODE / FRONTEND BUILD  
+# ==============================================================================  
+node_modules/  
+jspm_packages/  
+bower_components/  
+web_modules/  
+.npm/  
+.pnpm-store/  
+.lock-wscript  
+build/Release  
+.yarn/*  
+!.yarn/patches  
+!.yarn/releases  
+!.yarn/plugins  
+!.yarn/sdks  
+!.yarn/versions  
+.yarn/cache  
+.yarn/unplugged  
+.yarn/build-state.yml  
+.yarn/install-state.gz  
+.yarn-integrity  
+.pnp.*  
+.node_repl_history  
+*.tsbuildinfo  
+.grunt  
+.next/  
+.nuxt/  
+.output/  
+.svelte-kit/  
+.vite/  
+vite.config.js.timestamp-*  
+vite.config.ts.timestamp-*  
+**/.vitepress/cache  
+**/.vitepress/dist  
+.vuepress/dist  
+.docusaurus/  
+.serverless/  
+.webpack/  
+.rollup.cache/  
+.fusebox/  
+.dynamodb/  
+.firebase/  
+storybook-static/  
+  
+  
+# ==============================================================================  
+# 12. STATIC SITE / RUBY (docs folders)  
+# ==============================================================================  
+_site/  
+.jekyll-cache/  
+.jekyll-metadata  
+.bundle/  
+  
+  
+# ==============================================================================  
+# 13. INFRASTRUCTURE & OPS  
+# ==============================================================================  
+.terraform/  
+**/.terraform/*  
+*.tfstate  
+*.tfstate.*  
+*.tfvars  
+*.tfvars.json  
+override.tf  
+override.tf.json  
+*_override.tf  
+*_override.tf.json  
+.terraformrc  
+terraform.rc  
+!*.tfvars.example  
+.vagrant/  
+*.box  
+.ansible/  
+docker-compose.override.yml  
+.dockerignore.local  
+*.retry  
+  
+  
+# ==============================================================================  
+# 14. PROJECT-SPECIFIC — malware scanning artefacts  
+# ==============================================================================  
+# Scan output, quarantined files and captured samples must never be committed.  
+/quarantine/  
+/samples/  
+/malware-samples/  
+/infected/  
+/scan-results/  
+/scans/  
+/reports/  
+*.quarantine  
+*.infected  
+scan-*.json  
+scan-*.csv  
+scan-*.html  
+malware-report-*  
+!reports/.gitkeep  
+!**/*.example.json  
+  
+  
+# ==============================================================================  
+# 15. LOCAL-ONLY OVERRIDES  
+# ==============================================================================  
+*.local  
+local.*  
+!local.example.*  
+.local/

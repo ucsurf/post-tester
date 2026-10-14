@@ -1,0 +1,4 @@
+[env]
+# TypeScript types generated from Rust (`cargo test`) are written here, so the
+# UI and the plugin SDK always match the engine.
+TS_RS_EXPORT_DIR = { value = "packages/bindings/src", relative = true }

@@ -406,7 +406,7 @@ sequenceDiagram
     Agent->>PT: tools/call run_collection { folder: "checkout" }
     PT->>API: POST /auth/login, POST /orders, …
     API-->>PT: 200 OK, 201 Created, …
-    Note over Agent,API: Secrets are filled in by post-tester; the agent only knows their names.<br/>Every step appears in Live Activity as it happens.
+    Note over Agent,API: Secrets are filled in by post-tester, so the agent only knows their names.<br/>Every step appears in Live Activity as it happens.
     PT-->>Agent: A summary per request, with test results
     Agent-->>You: "Yes: 4 requests, all tests pass ✅"
 ```
